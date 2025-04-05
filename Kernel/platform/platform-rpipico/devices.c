@@ -10,6 +10,8 @@
 #include "globals.h"
 #include "picosdk.h"
 #include <hardware/irq.h>
+#include <hardware/structs/timer.h>
+#include <pico/multicore.h>
 #include "core1.h"
 
 struct devsw dev_tab[] =  /* The device driver switch table */
@@ -88,4 +90,3 @@ void device_init(void)
 }
 
 /* vim: sw=4 ts=4 et: */
-

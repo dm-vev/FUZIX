@@ -28,6 +28,8 @@ add_executable(fuzix
 	devices.c
 	devflash.c
 	devsdspi.c
+	lcdspi.c
+	i2ckbd.c
 	devtty.c
 	elf.c 
 	main.c
@@ -81,6 +83,7 @@ target_link_libraries(fuzix
 	pico_multicore
 	hardware_flash
 	hardware_spi
+	hardware_i2c
 	tinyusb_device
 )
 

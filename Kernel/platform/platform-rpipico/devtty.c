@@ -9,6 +9,8 @@
 #include <pico/multicore.h>
 #include "core1.h"
 #include "devtty.h"
+#include "lcdspi.h"
+#include "i2ckbd.h"
 
 uint8_t ttybuf[TTYSIZ * NUM_DEV_TTY];
 
@@ -24,10 +26,11 @@ void no_setup(uint_fast8_t minor, uint_fast8_t devn, uint_fast8_t flags)
     used(flags);
 }
 
-struct ttydriver ttydrivers[2] =
-    {
-        {rawuart_putc, rawuart_ready, rawuart_sleeping, rawuart_getc, rawuart_setup},
-        {usbconsole_putc, usbconsole_ready, usbconsole_sleeping, usbconsole_getc, no_setup},
+struct ttydriver ttydrivers[3] =
+{
+    { rawuart_putc,     rawuart_ready,      rawuart_sleeping,       rawuart_getc,       rawuart_setup },
+    { usbconsole_putc,  usbconsole_ready,   usbconsole_sleeping,    usbconsole_getc,    no_setup },
+    {lcd_putc,lcd_ready,lcd_sleeping,lcd_getc,no_setup},
 };
 
 static void devtty_defconfig(uint8_t drv, int count, int minor)
@@ -52,6 +55,9 @@ static void devtty_defconfig(uint8_t drv, int count, int minor)
 /* To be called right after startup to be able to print boot messages */
 void devtty_early_init(void)
 {
+    init_i2c_kbd();
+    lcd_init();// init spi lcd
+    lcd_clear();
     rawuart_early_init();
     core1_init();
     devtty_init();
@@ -90,6 +96,7 @@ void devtty_init(void)
         {
             devtty_defconfig(TTYDRV_USB, NUM_DEV_TTY_USB, 1);
             devtty_defconfig(TTYDRV_UART, NUM_DEV_TTY_UART, 1 + NUM_DEV_TTY_USB);
+            devtty_defconfig(TTYDRV_LCD, NUM_DEV_TTY_LCD, 2 + NUM_DEV_TTY_USB);
             until = delayed_by_ms(get_absolute_time(), DEV_USB_INIT_TIMEOUT);
             while (absolute_time_diff_us(get_absolute_time(), until) > 0)
             {
@@ -99,9 +106,10 @@ void devtty_init(void)
         }
         else
         {
-            devtty_defconfig(TTYDRV_UART, NUM_DEV_TTY_UART, 1);
-            devtty_defconfig(TTYDRV_USB, NUM_DEV_TTY_USB, 1 + NUM_DEV_TTY_UART);
-            kprintf("devtty: %s as default tty\n", "uart");
+            devtty_defconfig(TTYDRV_UART, NUM_DEV_TTY_UART, 2);
+            devtty_defconfig(TTYDRV_LCD, NUM_DEV_TTY_LCD, 1);
+            devtty_defconfig(TTYDRV_UART, NUM_DEV_TTY_USB, 3 );
+            kprintf("devtty: %s as default tty\n", "lcd");
         }
         ttymap_count = NUM_DEV_TTY;
     }

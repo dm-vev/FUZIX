@@ -48,6 +48,9 @@ uint_fast8_t sd_spi_receive_byte(void);
 bool sd_spi_receive_sector(void);
 bool sd_spi_transmit_sector(void);
 
+void lock_mutex();
+void unlock_mutex();
+
 uint_fast8_t sd_spi_try_release(void);
 
 /* for platforms which support multiple SD cards */

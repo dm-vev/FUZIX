@@ -283,9 +283,14 @@ static char bootline[64];
 uint16_t get_root_dev(void)
 {
 	uint16_t rd = BAD_ROOT_DEV;
-
+	
 	if (cmdline && *cmdline){
+	  kputs(cmdline);
+#ifdef DEBUG
+	kprintf("cmdline: %s\n",cmdline);
+#endif
 		rd = bootdevice(cmdline);
+
         }
         cmdline = NULL;                   /* ignore cmdline if get_root_dev() is called again */
 

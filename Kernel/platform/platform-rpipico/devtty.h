@@ -21,6 +21,7 @@ struct ttymap
 
 #define TTYDRV_UART 0
 #define TTYDRV_USB 1
+#define TTYDRV_LCD 2
 
 extern int ttymap_count;
 extern struct ttymap ttymap[NUM_DEV_TTY+1];

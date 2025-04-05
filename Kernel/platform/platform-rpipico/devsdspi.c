@@ -9,10 +9,10 @@
 #include "picosdk.h"
 #include "globals.h"
 #include "config.h"
+#include "lcdspi.h"
 #include <hardware/spi.h>
 
 #ifdef CONFIG_RC2040
-
 /* RC2040 board */
 /* Pico SPI GPIO connected to SD SPI1 */
 #define Pico_SD_SCK 14
@@ -33,15 +33,24 @@
 
 #define Pico_SD_SPI_MOD spi1
 
+#elif defined(CONFIG_PICOCALC)
+//#define SD_USE_PIO 1
+//picocalc
+#ifdef SD_USE_PIO
+
+#define Pico_SD_SCK  2//
+#define Pico_SD_TX  3 // MOSI
+#define Pico_SD_RX  20 // MISO
+#define Pico_SD_CS  6 // SD_CS
+
 #else
 
-/* Pico SPI GPIO connected to SD SPIO - David Given's Arrangement */
-#define Pico_SD_SCK 2
-#define Pico_SD_TX  3
-#define Pico_SD_RX  4
-#define Pico_SD_CS  5
+#define Pico_SD_SCK 18 //
+#define Pico_SD_TX  19 // MOSI
+#define Pico_SD_RX  16 // MISO
+#define Pico_SD_CS  17 // SD_CS
 
-//Pico spi0 or spi1 must match GPIO pins used above.
+#endif
 #define Pico_SD_SPI_MOD spi0
 
 #endif
@@ -79,6 +88,8 @@ void sd_spi_clock(bool go_fast)
 void sd_spi_raise_cs(void)
 {
     gpio_put(Pico_SD_CS, true);
+    //nop;nop;nop;nop;nop;
+    //HW1SwapSPI(0xFF);
 }
 
 void sd_spi_lower_cs(void)

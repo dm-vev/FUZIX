@@ -9,10 +9,15 @@
  *      RX  GPIO 12
  *      CS  GPIO 13
  *  CONFIG_MAKER_PI
- *	SCK GPIO 10
- *	TX  GPIO 11
- *	RX  GPIO 12
- *	CS  GPIO 15
+ *	    SCK GPIO 10
+ *	    TX  GPIO 11
+ *	    RX  GPIO 12
+ *	    CS  GPIO 15
+ *  CONFIG_PICOCALC
+ *	    SCK GPIO 18
+ *	    TX  GPIO 19
+ *	    RX  GPIO 16
+ *	    CS  GPIO 17
  *  If Undefined
  *      SCK GPIO 2
  *      TX  GPIO 3
@@ -20,8 +25,8 @@
  *      CS  GPIO 5
  */
 
-#define CONFIG_RC2040
-
+//#define CONFIG_RC2040
+#define CONFIG_PICOCALC
 /* We have a GPIO interface */
 #define CONFIG_DEV_GPIO
 /* Enable to make ^Z dump the inode table for debug */
@@ -65,7 +70,7 @@
 #undef CONFIG_FONT8X8
 
 /* Built in NAND flash. Warning, it's unstable. */
-#define CONFIG_PICO_FLASH
+//#define CONFIG_PICO_FLASH
 
 /* Program layout */
 
@@ -124,7 +129,8 @@ extern uint8_t progbase[USERMEM];
 #define DEV_UART_1_CTS_PIN 8
 #define DEV_UART_1_RTS_PIN 9
 #define NUM_DEV_TTY_USB 4 /* min 1 max 4. */
-#define NUM_DEV_TTY (NUM_DEV_TTY_UART + NUM_DEV_TTY_USB)
+#define NUM_DEV_TTY_LCD 1
+#define NUM_DEV_TTY (NUM_DEV_TTY_UART + NUM_DEV_TTY_USB + NUM_DEV_TTY_LCD)
 #define DEV_USB_DETECT_TIMEOUT 5000 /* (ms) Total timeout time to detect USB host connection*/
 #define DEV_USB_INIT_TIMEOUT 2000 /* (ms) Total timeout to try not swallow messages */
 
@@ -140,9 +146,14 @@ extern uint8_t progbase[USERMEM];
 #define swap_map(x) ((uint8_t*)(x))
 
 /* Prevent name clashes wish the Pico SDK */
+#define BOOTDEVICENAMES "hd#"
+
+#define BOOTDEVICE 2
 
 #define MANGLED 1
 #include "mangle.h"
+
+#define DEBUG
 
 #endif
 // vim: sw=4 ts=4 et
