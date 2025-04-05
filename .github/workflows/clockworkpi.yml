@@ -1,0 +1,48 @@
+name: clockworkpi
+on:
+  push:
+    branches: picocalc
+  pull_request:
+
+concurrency:
+  group: environment-clockworkpi-${{ github.head_ref }}
+  cancel-in-progress: true
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false # keep on building even if one target fails
+      matrix:
+        subtarget: [pico2, pico_w]
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v3
+    - name: install build deps
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib byacc automake
+        sudo update-alternatives --set yacc /usr/bin/byacc
+    - name: make
+      run: make TARGET=rpipico SUBTARGET=${{ matrix.subtarget }} diskimage
+    - name: assemble
+      run: |
+        zipname=picocalc-fuzix-${{ matrix.subtarget }}
+        mkdir $zipname
+        mv Kernel/platform/platform-rpipico/build/fuzix.uf2 $zipname
+        mv Images/rpipico/filesys.img $zipname/filesystem.img
+        7z a -tzip $zipname.zip $zipname
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: picocalc-fuzix-${{ matrix.subtarget }}.zip
+        path: "picocalc-*.zip"
+
+    - name: Upload Release Asset
+      uses: softprops/action-gh-release@v2
+      if: github.event_name != 'pull_request' && github.ref == 'refs/heads/picocalc'
+      with:
+        tag_name: clockworkpi-continuous
+        files: |
+          picocalc-fuzix-${{ matrix.subtarget }}.zip
