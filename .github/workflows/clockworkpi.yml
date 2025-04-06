@@ -31,7 +31,7 @@ jobs:
         zipname=picocalc-fuzix-${{ matrix.subtarget }}
         mkdir $zipname
         mv Kernel/platform/platform-rpipico/build/fuzix.uf2 $zipname
-        mv Images/rpipico/filesys.img $zipname/filesystem.img
+        mv Kernel/platform/platform-rpipico/filesystem.img $zipname
         7z a -tzip $zipname.zip $zipname
     - name: Upload artifact
       uses: actions/upload-artifact@v4
