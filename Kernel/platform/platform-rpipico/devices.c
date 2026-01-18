@@ -9,6 +9,7 @@
 #include <dev/devsd.h>
 #include <printf.h>
 #include "globals.h"
+#include "devfb.h"
 #include "picosdk.h"
 #include <hardware/irq.h>
 #include <hardware/structs/timer.h>
@@ -35,6 +36,8 @@ struct devsw dev_tab[] =  /* The device driver switch table */
   {  no_open,      no_close,   no_rdwr,   no_rdwr,  no_ioctl  },
   /* 8: /dev/rd? - PSRAM-backed RAM disk */
   {  rd_open,      no_close,   rd_read,   rd_write, no_ioctl  },
+  /* 9: /dev/fb - framebuffer control */
+  {  fb_open,      fb_close,   fb_read,   fb_write, fb_ioctl },
 };
 
 static absolute_time_t now;

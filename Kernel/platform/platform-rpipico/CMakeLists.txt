@@ -31,6 +31,7 @@ add_executable(fuzix
 	devflash.c
 	devsdspi.c
 	devrd_psram.c
+	devfb.c
 	lcdspi.c
 	i2ckbd.c
 	devtty.c

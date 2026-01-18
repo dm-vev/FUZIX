@@ -32,6 +32,7 @@ struct display {
 #define FMT_3BPP_U16	137	/* 5 x 3bpp pixels a word (top bit unused) */
 #define FMT_THOMSON_C16	138	/* Interleaved packed pixel */
 #define FMT_THOMSON_TO7	139	/* two colours per 8 pixel row */
+#define FMT_BGR888	140	/* 24bpp BGR packed */
   uint8_t hardware;
 #define HW_UNACCEL	1	/* Simple display */
 #define HW_VDP_9918A	128	/* Not neccessarily MSX... */
@@ -122,6 +123,24 @@ struct videomap {
 #define GFXIOC_AWRITE		0x0314	/* Write to attributes direct */
 #define GFXIOC_EXG		0x0315	/* Exchange a block */
 #define GFXIOC_SCROLL		0x0316	/* Set scroll offsets x word, y word */
+
+/* Framebuffer management (device-specific, optional) */
+#define FBIOC_LOCK		0x0330	/* Exclusive access */
+#define FBIOC_UNLOCK		0x0331	/* Release exclusive access */
+#define FBIOC_GETDIRTY		0x0332	/* Get dirty rectangle */
+#define FBIOC_CLEARDIRTY	0x0333	/* Clear dirty tracking */
+#define FBIOC_FLUSH		0x0334	/* Flush framebuffer to display */
+
+struct fb_rect {
+  uint16_t x;
+  uint16_t y;
+  uint16_t w;
+  uint16_t h;
+};
+
+#define FB_MODE_TEXT	0
+#define FB_MODE_DIRECT	1
+#define FB_MODE_MEMORY	2
 
 struct blit {
  uint16_t ys;

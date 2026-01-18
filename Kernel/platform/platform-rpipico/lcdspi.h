@@ -120,6 +120,9 @@ extern void lcd_putc(uint8_t devn, uint8_t c);
 extern int  lcd_getc(uint8_t devn);
 extern void lcd_sleeping(uint8_t devn);
 extern ttyready_t lcd_ready(uint8_t devn);
+extern void lcd_text_enable(bool enable);
+extern void lcd_text_reset(void);
+extern void lcd_draw_rect_bgr(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint8_t *bgr);
 
 extern void lcd_spi_init();
 extern void lcd_init();

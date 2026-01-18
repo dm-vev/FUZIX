@@ -56,6 +56,7 @@ static short HRes = 0;
 static short VRes = 0;
 static char S_Height;
 static char S_Width;
+static bool lcd_text_enabled = true;
 
 #ifdef HARDWARE_SCROLL
 short offsetY = 0;
@@ -545,6 +546,8 @@ void lcd_clear() {
 }
 
 void lcd_putc(uint8_t devn, uint8_t c) {
+    if (!lcd_text_enabled)
+        return;
     DisplayPutC(c);
 }
 
@@ -558,6 +561,30 @@ void lcd_sleeping(uint8_t devn){
 }
 ttyready_t lcd_ready(uint8_t devn){
     return TTY_READY_NOW;
+}
+
+void lcd_text_enable(bool enable)
+{
+    lcd_text_enabled = enable;
+}
+
+void lcd_text_reset(void)
+{
+    CurrentX = 0;
+    CurrentY = 0;
+}
+
+void lcd_draw_rect_bgr(uint16_t x, uint16_t y, uint16_t w, uint16_t h, const uint8_t *bgr)
+{
+    if (!w || !h)
+        return;
+    if (x >= LCD_WIDTH || y >= LCD_HEIGHT)
+        return;
+    if (x + w > LCD_WIDTH)
+        w = LCD_WIDTH - x;
+    if (y + h > LCD_HEIGHT)
+        h = LCD_HEIGHT - y;
+    DrawBufferSPI(x, y, x + w - 1, y + h - 1, (unsigned char *)bgr);
 }
 
 unsigned char __not_in_flash_func(HW1SwapSPI)(unsigned char data_out){

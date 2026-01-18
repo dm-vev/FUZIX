@@ -121,6 +121,7 @@ n 60660 2048 /dev/rd0
 n 60661 2049 /dev/rd1
 n 60662 2050 /dev/rd2
 n 60663 2051 /dev/rd3
+n 20666 2304 /dev/fb
 
 f 0644 /etc/group     etc-files/group
 f 0644 /etc/issue     etc-files/issue
