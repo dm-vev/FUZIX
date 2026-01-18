@@ -45,6 +45,8 @@ mknod tty5  20660 517
 mknod tty6  20660 518
 mknod tty7  20660 519
 mknod tty8  20660 520
+mknod ttyS0 20660 519
+mknod ttyS1 20660 520
 mknod pty0  20660 2560
 mknod pty1  20660 2561
 mknod pty2  20660 2562

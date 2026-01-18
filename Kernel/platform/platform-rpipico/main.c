@@ -48,7 +48,7 @@ uint_fast8_t plt_param(char* p)
             ttymap[ttymap_count+1].tty = atoi(s);
             ttymap[ttymap_count+1].drv = drv;
             ttymap_count++;
-            if (ttymap_count >= NUM_DEV_TTY)
+            if (ttymap_count > (NUM_DEV_TTY - NUM_DEV_TTY_EXTRA))
             {
                 panic("ttycount");
             }
@@ -118,5 +118,4 @@ int main(void)
 }
 
 /* vim: sw=4 ts=4 et: */
-
 

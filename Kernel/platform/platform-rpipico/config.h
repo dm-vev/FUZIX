@@ -34,8 +34,8 @@
 /* Enable to make ^A drop back into the monitor */
 #undef CONFIG_MONITOR
 /* Enable to support network stack */
-#undef CONFIG_NET
-#undef CONFIG_NET_NATIVE
+#define CONFIG_NET
+#define CONFIG_NET_NATIVE
 /* Profil syscall support (not yet complete) */
 #undef CONFIG_PROFIL
 /* Multiple processes in memory at once */
@@ -150,7 +150,9 @@ extern uint8_t progbase[USERMEM];
 #define DEV_UART_1_RTS_PIN 9
 #define NUM_DEV_TTY_USB 4 /* min 1 max 4. */
 #define NUM_DEV_TTY_LCD 1
-#define NUM_DEV_TTY (NUM_DEV_TTY_UART + NUM_DEV_TTY_USB + NUM_DEV_TTY_LCD)
+/* Extra fixed UART nodes (eg /dev/ttyS0,/dev/ttyS1) */
+#define NUM_DEV_TTY_EXTRA 2
+#define NUM_DEV_TTY (NUM_DEV_TTY_UART + NUM_DEV_TTY_USB + NUM_DEV_TTY_LCD + NUM_DEV_TTY_EXTRA)
 #define DEV_USB_DETECT_TIMEOUT 5000 /* (ms) Total timeout time to detect USB host connection*/
 #define DEV_USB_INIT_TIMEOUT 2000 /* (ms) Total timeout to try not swallow messages */
 

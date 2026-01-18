@@ -41,6 +41,24 @@ struct ttydriver ttydrivers[3] =
     {lcd_putc,lcd_ready,lcd_sleeping,lcd_getc,no_setup},
 };
 
+static void devtty_map_extra_ports(void)
+{
+#if NUM_DEV_TTY_EXTRA >= 1
+    /* /dev/ttyS0 */
+    const int minor = NUM_DEV_TTY - NUM_DEV_TTY_EXTRA + 1;
+    ttymap[minor].tty = 1; /* UART0 */
+    ttymap[minor].drv = TTYDRV_UART;
+    termios_mask[minor] = CSIZE | CBAUD | PARENB | PARODD | _CSYS;
+#endif
+#if NUM_DEV_TTY_EXTRA >= 2
+    /* /dev/ttyS1 */
+    const int minor = NUM_DEV_TTY - NUM_DEV_TTY_EXTRA + 2;
+    ttymap[minor].tty = 2; /* UART1 */
+    ttymap[minor].drv = TTYDRV_UART;
+    termios_mask[minor] = CSIZE | CBAUD | PARENB | PARODD | _CSYS;
+#endif
+}
+
 static void devtty_defconfig(uint8_t drv, int count, int minor)
 {
     int devnum = 1;
@@ -133,8 +151,10 @@ void devtty_init(void)
             devtty_defconfig(TTYDRV_UART, NUM_DEV_TTY_USB, 3 );
             kprintf("devtty: %s as default tty\n", "lcd");
         }
-        ttymap_count = NUM_DEV_TTY;
     }
+
+    devtty_map_extra_ports();
+    ttymap_count = NUM_DEV_TTY;
 }
 
 /* Output for the system console (kprintf etc) */
