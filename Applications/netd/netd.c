@@ -57,6 +57,8 @@ int bfd;   /* fd of data backing file */
 #endif
 int knet;  /* fd of kernel's network inface */
 int rc;    /* fd of rc file */
+int netd_argc;
+char **netd_argv;
 struct sockmsg sm; /* event from kernel iface */
 struct netevent ne; /* event to kernel iface */
 struct timer periodic_timer, arp_timer;
@@ -992,6 +994,9 @@ int main( int argc, char *argv[] )
 	int ret;
 	uip_ipaddr_t ipaddr;
 	uip_eth_addr ethaddr;       /* mac address buffer */
+
+	netd_argc = argc;
+	netd_argv = argv;
 
 	signal(SIGHUP, cleanup);
 	signal(SIGINT, cleanup);
