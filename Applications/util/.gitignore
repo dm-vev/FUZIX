@@ -3,6 +3,7 @@
 
 # ..except source files
 !*.c
+!termd_font8x8.h
 
 # ..and documentation (including man pages)
 !COPYING

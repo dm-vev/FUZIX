@@ -189,6 +189,7 @@ bget ../../../Applications/util/tar
 bget ../../../Applications/util/tee
 bget ../../../Applications/util/tail
 bget ../../../Applications/util/telinit
+bget ../../../Applications/util/termd
 bget ../../../Applications/util/touch
 bget ../../../Applications/util/tr
 bget ../../../Applications/util/true
