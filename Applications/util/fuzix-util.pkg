@@ -87,6 +87,7 @@ f 0755 /bin/grep        grep
 f 0755 /bin/groups      groups
 f 0755 /bin/head        head
 f 0755 /bin/id          id
+f 0755 /usr/bin/inkd    inkd
 f 0755 /bin/kbdrate     kbdrate
 f 0755 /bin/less        less
 f 0755 /bin/ll          ll

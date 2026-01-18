@@ -67,6 +67,7 @@ SRCS  = \
 	gptparse.c \
 	grep.c \
 	id.c \
+	inkd.c \
 	kbdrate.c \
 	labelfs.c \
 	ll.c \
