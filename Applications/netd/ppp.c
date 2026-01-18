@@ -11,7 +11,6 @@
  * and we fake the ethertype field (0x0800) like slip.c does.
  */
 
-#include <arpa/inet.h>
 #include <ctype.h>
 #include <stdarg.h>
 #include <errno.h>
@@ -26,6 +25,7 @@
 #include <unistd.h>
 
 #include <sys/ioctl.h>
+#include <sys/netdev.h>
 #include <sys/net_native.h>
 
 #include "device.h"
