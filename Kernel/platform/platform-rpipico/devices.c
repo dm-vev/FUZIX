@@ -38,6 +38,10 @@ struct devsw dev_tab[] =  /* The device driver switch table */
   {  rd_open,      no_close,   rd_read,   rd_write, no_ioctl  },
   /* 9: /dev/fb - framebuffer control */
   {  fb_open,      fb_close,   fb_read,   fb_write, fb_ioctl },
+  /* 10: /dev/pty? - PTY master devices */
+  {  pty_open,     pty_close,  pty_read,  pty_write, pty_ioctl },
+  /* 11: /dev/ptty? - PTY slave devices */
+  {  ptty_open,    ptty_close, ptty_read, ptty_write, ptty_ioctl },
 };
 
 static absolute_time_t now;

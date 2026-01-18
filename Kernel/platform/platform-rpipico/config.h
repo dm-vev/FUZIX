@@ -68,6 +68,8 @@
 /* Serial TTY, no VT or font */
 #undef CONFIG_VT
 #undef CONFIG_FONT8X8
+/* PTY support for userland terminal emulators */
+#define CONFIG_PTY_DEV
 
 /* Built in NAND flash. Warning, it's unstable. */
 //#define CONFIG_PICO_FLASH

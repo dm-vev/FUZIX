@@ -15,7 +15,7 @@
  *	Add a small echo buffer to each tty
  */
 
-struct tty ttydata[NUM_DEV_TTY + 1];	/* ttydata[0] is not used */
+struct tty ttydata[TTY_DEV_COUNT + 1];	/* ttydata[0] is not used */
 
 #ifdef CONFIG_LEVEL_2
 static uint16_t tty_select;		/* Fast path if no selects, could do with being per tty ? */
@@ -166,7 +166,7 @@ int tty_open(uint_fast8_t minor, uint16_t flag)
 	register struct tty *t;
 	irqflags_t irq;
 
-	if (minor > NUM_DEV_TTY) {
+	if (minor > TTY_DEV_COUNT) {
 		udata.u_error = ENODEV;
 		return -1;
 	}
@@ -521,9 +521,9 @@ uint_fast8_t tty_putc_maywait(uint_fast8_t minor, uint_fast8_t c, uint_fast8_t f
 
         flag &= O_NDELAY;
 
-#ifdef CONFIG_DEV_PTY
+#ifdef CONFIG_PTY_DEV
 	if (minor >= PTY_OFFSET)
-		ptty_putc_wait(minor, c);
+		pty_putc_wait(minor, c);
 	else
 #endif
         /* For slower platforms it's not worth the task switching and return
@@ -615,7 +615,7 @@ void tty_carrier_raise(uint_fast8_t minor)
  *	PTY logic
  */
 
-#ifdef CONFIG_DEV_PTY
+#ifdef CONFIG_PTY_DEV
 
 static uint8_t ptyusers[PTY_PAIR];
 
@@ -639,9 +639,9 @@ int ptty_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 	return tty_read(minor + PTY_OFFSET, rawflag, flag);
 }
 
-int ptty_ioctl(uint_fast8_t minor, uint16_t request, char *data)
+int ptty_ioctl(uint_fast8_t minor, uarg_t request, char *data)
 {
-	return tty_ioctl(minor + PTY_OFFSET, rawflag, flag);
+	return tty_ioctl(minor + PTY_OFFSET, request, data);
 }
 
 int pty_open(uint_fast8_t minor, uint16_t flag)
@@ -659,23 +659,25 @@ int pty_close(uint_fast8_t minor)
 {
 	ptyusers[minor]--;
 	if (ptyusers[minor] == 0)
-		tty_carrider_drop(minor + PTY_OFFSET);
+		tty_carrier_drop(minor + PTY_OFFSET);
 	return tty_close(minor + PTY_OFFSET);
 }
 
 int pty_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
-	uint16_t nwritten;
+	uint16_t nwritten = 0;
+	uint_fast8_t c;
 	minor += PTY_OFFSET;
+	used(rawflag);
 
 	while (nwritten < udata.u_count) {
 		if (udata.u_sysio)
-			c = udata.u_base;
+			c = *udata.u_base;
 		else
 			c = ugetc(udata.u_base);
 		if (tty_inproc(minor, c)) {
 			nwritten++;
-			udata.u_count++;
+			udata.u_base++;
 			continue;
 		}
 		if (nwritten == 0
@@ -688,8 +690,10 @@ int pty_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 
 int pty_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
-	struct s_queue q = &ttyinq[minor + PTY_OFFSET + PTY_PAIR];
-	char c;
+	struct s_queue *q = &ttyinq[minor + PTY_OFFSET + PTY_PAIR];
+	uint_fast8_t c;
+	uint16_t nread = 0;
+	used(rawflag);
 
 	while (nread < udata.u_count) {
 		if (remq(q, &c)) {
@@ -707,14 +711,14 @@ int pty_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 	return nread;
 }
 
-int pty_ioctl(uint_fast8_t minor, uint16_t request, char *data)
+int pty_ioctl(uint_fast8_t minor, uarg_t request, char *data)
 {
-	return tty_ioctl(minor + PTY_OFFSET, rawflag, flag);
+	return tty_ioctl(minor + PTY_OFFSET, request, data);
 }
 
 void pty_putc_wait(uint_fast8_t minor, char c)
 {
-	struct s_queue q = &ptyq[minor + PTY_OFFSET + PTY_PAIR];
+	struct s_queue *q = &ttyinq[minor + PTY_OFFSET + PTY_PAIR];
 	/* tty output queue to pty */
 	insq(q, c);
 	/* FIXME: select */

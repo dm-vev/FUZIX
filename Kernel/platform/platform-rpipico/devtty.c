@@ -13,11 +13,19 @@
 #include "i2ckbd.h"
 
 uint8_t ttybuf[TTYSIZ * NUM_DEV_TTY];
+PTY_BUFFERS;
 
 int ttymap_count;
 struct ttymap ttymap[NUM_DEV_TTY + 1];
-struct s_queue ttyinq[NUM_DEV_TTY + 1];
-tcflag_t termios_mask[NUM_DEV_TTY + 1];
+struct s_queue ttyinq[TTY_QUEUE_COUNT];
+tcflag_t termios_mask[TTY_DEV_COUNT + 1];
+
+#ifdef CONFIG_PTY_DEV
+static uint8_t *pty_buffers[PTY_PAIR * 2] = {
+    pbuf0, pbuf1, pbuf2, pbuf3, pbuf4, pbuf5, pbuf6, pbuf7,
+    pbuf8, pbuf9, pbufa, pbufb, pbufc, pbufd, pbufe, pbuff
+};
+#endif
 
 void no_setup(uint_fast8_t minor, uint_fast8_t devn, uint_fast8_t flags)
 {
@@ -77,6 +85,20 @@ void devtty_init(void)
         ttyinq[i].q_count = 0;
         ttyinq[i].q_wakeup = TTYSIZ / 2;
     }
+#ifdef CONFIG_PTY_DEV
+    for (int i = 0; i < (int)(PTY_PAIR * 2); i++)
+    {
+        struct s_queue *q = &ttyinq[PTY_OFFSET + i];
+        q->q_base = q->q_head = q->q_tail = pty_buffers[i];
+        q->q_size = TTYSIZ;
+        q->q_count = 0;
+        q->q_wakeup = TTYSIZ / 2;
+    }
+    for (int i = 0; i < PTY_PAIR; i++)
+    {
+        termios_mask[PTY_OFFSET + i] = _CSYS;
+    }
+#endif
 
     if (defconfig)
     {

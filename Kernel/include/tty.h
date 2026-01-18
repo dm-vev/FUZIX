@@ -224,8 +224,19 @@ struct tty {
 
 #define CTRL(x)		((x)&0x1F)
 
-extern struct tty ttydata[NUM_DEV_TTY + 1];
-extern tcflag_t termios_mask[NUM_DEV_TTY + 1];
+#ifdef CONFIG_PTY_DEV
+#define PTY_PAIR 8
+#define PTY_OFFSET	(NUM_DEV_TTY + 1)
+#define TTY_DEV_COUNT	(NUM_DEV_TTY + PTY_PAIR)
+#define TTY_QUEUE_COUNT	(NUM_DEV_TTY + 1 + (PTY_PAIR * 2))
+#else
+#define PTY_OFFSET	(NUM_DEV_TTY + 1)
+#define TTY_DEV_COUNT	NUM_DEV_TTY
+#define TTY_QUEUE_COUNT	(NUM_DEV_TTY + 1)
+#endif /* CONFIG_PTY_DEV */
+
+extern struct tty ttydata[TTY_DEV_COUNT + 1];
+extern tcflag_t termios_mask[TTY_DEV_COUNT + 1];
 
 extern void tty_init(void);
 
@@ -248,13 +259,14 @@ extern int ptty_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag
 extern int ptty_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag);
 extern int ptty_open(uint_fast8_t minor, uint16_t flag);
 extern int ptty_close(uint_fast8_t minor);
-extern int ptty_ioctl(uint_fast8_t minor, uint16_t request, char *data);
+extern int ptty_ioctl(uint_fast8_t minor, uarg_t request, char *data);
 
 extern int pty_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag);
 extern int pty_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag);
 extern int pty_open(uint_fast8_t minor, uint16_t flag);
 extern int pty_close(uint_fast8_t minor);
-extern int pty_ioctl(uint_fast8_t minor, uint16_t request, char *data);
+extern int pty_ioctl(uint_fast8_t minor, uarg_t request, char *data);
+extern void pty_putc_wait(uint_fast8_t minor, char c);
 
 extern uint_fast8_t tty_inproc(uint_fast8_t minor, uint_fast8_t c);
 extern void tty_outproc(uint_fast8_t minor);
@@ -277,7 +289,7 @@ typedef enum {
 } ttyready_t;
 
 /* provided by platform */
-extern struct s_queue ttyinq[NUM_DEV_TTY + 1];
+extern struct s_queue ttyinq[TTY_QUEUE_COUNT];
 extern ttyready_t tty_writeready(uint_fast8_t minor);
 extern void tty_sleeping(uint_fast8_t minor);
 extern void tty_putc(uint_fast8_t minor, uint_fast8_t c);
@@ -305,27 +317,25 @@ static uint8_t pbufe[TTYSIZ];\
 static uint8_t pbuff[TTYSIZ];\
 
 #define PTY_QUEUES \
-    {pbuf0, pubf0, pubf0, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbuf1, pubf1, pubf1, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbuf2, pubf2, pubf2, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbuf3, pubf3, pubf3, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbuf4, pubf4, pubf4, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbuf5, pubf5, pubf5, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbuf6, pubf6, pubf6, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbuf7, pubf7, pubf7, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbuf8, pubf8, pubf8, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbuf9, pubf9, pubf9, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbufa, pubfa, pubfa, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbufb, pubfb, pubfb, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbufc, pubfc, pubfc, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbufd, pubfd, pubfd, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbufe, pubfe, pubfe, TTYSIZ, 0, TTYSIZ/2}, \
-    {pbuff, pubff, pubff, TTYSIZ, 0, TTYSIZ/2}
-
+    {pbuf0, pbuf0, pbuf0, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbuf1, pbuf1, pbuf1, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbuf2, pbuf2, pbuf2, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbuf3, pbuf3, pbuf3, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbuf4, pbuf4, pbuf4, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbuf5, pbuf5, pbuf5, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbuf6, pbuf6, pbuf6, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbuf7, pbuf7, pbuf7, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbuf8, pbuf8, pbuf8, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbuf9, pbuf9, pbuf9, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbufa, pbufa, pbufa, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbufb, pbufb, pbufb, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbufc, pbufc, pbufc, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbufd, pbufd, pbufd, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbufe, pbufe, pbufe, TTYSIZ, 0, TTYSIZ/2}, \
+    {pbuff, pbuff, pbuff, TTYSIZ, 0, TTYSIZ/2}
 #else
 
 #define PTY_BUFFERS
 #define PTY_QUEUES
-#define PTY_OFFSET	NUM_DEV_TTY
 #endif /* CONFIG_PTY_DEV */
 #endif /* TTY_DOT_H */
