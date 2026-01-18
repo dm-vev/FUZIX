@@ -417,6 +417,10 @@ bget ../../../Applications/netd/ntpdate
 bget ../../../Applications/netd/htget
 bget ../../../Applications/netd/tinyirc
 bget ../../../Applications/netd/ifconfig
+bget ../../../Applications/netd/route
+bget ../../../Applications/netd/netstat
+bget ../../../Applications/netd/arp
+bget ../../../Applications/netd/nc
 
 chmod 0755 netd-slip
 chmod 0755 pppd-fuzix
@@ -429,6 +433,12 @@ chmod 0755 ntpdate
 chmod 0755 htget
 chmod 0755 tinyirc
 chmod 0755 ifconfig
+chmod 0755 route
+chmod 0755 netstat
+chmod 0755 arp
+chmod 0755 nc
+ln htget wget
+ln dig dnslookup
 
 cd /usr
 mkdir games
