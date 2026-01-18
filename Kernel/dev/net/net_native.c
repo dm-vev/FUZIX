@@ -6,6 +6,23 @@
 
 #ifdef CONFIG_NET_NATIVE
 
+#ifdef CONFIG_PICOCALC
+#define NET_NATIVE_IFNAME "ppp0"
+#define NET_NATIVE_HWTYPE HW_SLIP
+#define NET_NATIVE_IFF_DEFAULT (IFF_POINTOPOINT | IFF_NOARP | IFF_RUNNING | IFF_UP)
+#endif
+
+#ifndef NET_NATIVE_IFNAME
+#define NET_NATIVE_IFNAME "eth0"
+#endif
+#ifndef NET_NATIVE_HWTYPE
+#define NET_NATIVE_HWTYPE HW_ETH
+#endif
+#ifndef NET_NATIVE_IFF_DEFAULT
+#define NET_NATIVE_IFF_DEFAULT (IFF_BROADCAST | IFF_RUNNING | IFF_UP)
+#endif
+#define NET_NATIVE_IFNAME_LEN (sizeof(NET_NATIVE_IFNAME) - 1)
+
 #define is_datagram(s) ((s)->s_class != SOCK_STREAM && (s)->s_class != SOCK_SEQPACKET)
 
 /* For now until we work out where this really belongs */
@@ -16,7 +33,7 @@ static int16_t mtu = 0;
 static uint32_t ipa = 0U;
 static uint32_t iga = 0U;
 static uint32_t igm = 0U;
-static uint16_t ifflags = IFF_BROADCAST|IFF_RUNNING|IFF_UP;
+static uint16_t ifflags = NET_NATIVE_IFF_DEFAULT;
 
 /*
  *	TODO: support using a malloc pool of out of bank (or flat space)
@@ -882,7 +899,8 @@ arg_t netproto_ioctl(struct socket *s, int op, char *ifr_u /* in user space */)
 
 	if (uget(ifr_u, &ifr, sizeof(struct ifreq)))
 		return -1;
-	if (op != SIOCGIFNAME && memcmp(ifr.ifr_name, "eth0", 5U)) {
+	if (op != SIOCGIFNAME &&
+	    memcmp(ifr.ifr_name, NET_NATIVE_IFNAME, NET_NATIVE_IFNAME_LEN + 1)) {
 		udata.u_error = ENODEV;
 		return -1;
 	}
@@ -893,7 +911,7 @@ arg_t netproto_ioctl(struct socket *s, int op, char *ifr_u /* in user space */)
 		udata.u_error = ENODEV;
 		return -1;
 	}
-	memcpy(ifr.ifr_name, "eth0", 5U);
+	memcpy(ifr.ifr_name, NET_NATIVE_IFNAME, NET_NATIVE_IFNAME_LEN + 1);
 	goto copyback;
 	case SIOCGIFINDEX:
 		ifr.ifr_ifindex = 0;
@@ -914,8 +932,9 @@ arg_t netproto_ioctl(struct socket *s, int op, char *ifr_u /* in user space */)
 		ifr.ifr_netmask.sa.sin.sin_addr.s_addr = igm;
 		goto copy_addr;
 	case SIOCGIFHWADDR:
-		memcpy(ifr.ifr_hwaddr.sa.hw.shw_addr, mac_addr, 6U);
-		ifr.ifr_hwaddr.sa.hw.shw_family = HW_ETH;
+		if (NET_NATIVE_HWTYPE == HW_ETH || NET_NATIVE_HWTYPE == HW_WLAN)
+			memcpy(ifr.ifr_hwaddr.sa.hw.shw_addr, mac_addr, 6U);
+		ifr.ifr_hwaddr.sa.hw.shw_family = NET_NATIVE_HWTYPE;
 		goto copyback;
 	case SIOCGIFMTU:
 		ifr.ifr_mtu = mtu;
