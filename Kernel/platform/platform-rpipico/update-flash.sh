@@ -112,6 +112,17 @@ bget ../../../Standalone/filesystem-src/etc-files/rc.reboot
 bget ../../../Standalone/filesystem-src/etc-files/termcap
 bget ../../../Applications/netd/netrc
 bget ../../../Applications/netd/resolv.conf
+mkdir ppp
+mkdir network
+chmod 0755 ppp
+chmod 0755 network
+cd /etc/ppp
+bget ../../../Standalone/filesystem-src/etc-files/ppp.conf
+chmod 0644 ppp.conf
+cd /etc/network
+bget ../../../Standalone/filesystem-src/etc-files/interfaces
+chmod 0644 interfaces
+cd /etc
 chmod 0644 fstab
 chmod 0644 group
 chmod 0644 inittab
@@ -392,6 +403,7 @@ chmod 0755 tchelp
 
 cd /usr/bin
 bget ../../../Applications/netd/netd-slip
+bget ../../../Applications/netd/pppd-fuzix
 bget ../../../Applications/netd/telnet
 bget ../../../Applications/netd/echoping
 bget ../../../Applications/netd/dig
@@ -403,6 +415,7 @@ bget ../../../Applications/netd/tinyirc
 bget ../../../Applications/netd/ifconfig
 
 chmod 0755 netd-slip
+chmod 0755 pppd-fuzix
 chmod 0755 telnet
 chmod 0755 echoping
 chmod 0755 dig

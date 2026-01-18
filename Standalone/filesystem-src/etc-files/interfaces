@@ -1,0 +1,5 @@
+auto ppp0
+iface ppp0 inet dhcp
+
+auto ppp1
+iface ppp1 inet dhcp
