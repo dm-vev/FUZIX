@@ -42,7 +42,11 @@ int main(int argc, char *argv[])
 		fputs("nc: cannot resolve hostname\n", stderr);
 		return 1;
 	}
-	memcpy(&addr.sin_addr.s_addr, he->h_addr, 4);
+	if (he->h_addr_list == NULL || he->h_addr_list[0] == NULL) {
+		fputs("nc: resolver returned no addresses\n", stderr);
+		return 1;
+	}
+	memcpy(&addr.sin_addr.s_addr, he->h_addr_list[0], 4);
 
 	s = socket(AF_INET, SOCK_STREAM, 0);
 	if (s < 0) {
