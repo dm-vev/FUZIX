@@ -5,6 +5,9 @@
 
 extern void flash_dev_init(void);
 extern void sd_rawinit(void);
+extern void psram_dev_init(void);
+extern void psram_bus_read(uint32_t psram_addr, uint8_t *dst, uint16_t count);
+extern void psram_bus_write(uint32_t psram_addr, const uint8_t *src, uint16_t count);
 
 extern void contextswitch(ptptr p);
 
@@ -54,4 +57,3 @@ struct extended_exception_frame
 };
 
 #endif
-

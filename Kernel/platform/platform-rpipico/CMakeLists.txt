@@ -30,6 +30,7 @@ add_executable(fuzix
 	devices.c
 	devflash.c
 	devsdspi.c
+	devrd_psram.c
 	lcdspi.c
 	i2ckbd.c
 	devtty.c
@@ -43,7 +44,9 @@ add_executable(fuzix
 	core1.c
 	devgpio.c
 	usbdescriptors.c
+	psram_spi.c
 	../../dev/blkdev.c
+	../../dev/devrd.c
 	../../dev/mbr.c
 	../../dev/devsd_discard.c
 	../../dev/devsd.c
@@ -84,12 +87,23 @@ target_link_libraries(fuzix
 	pico_stdlib
 	pico_multicore
 	hardware_flash
+	hardware_dma
+	hardware_pio
 	hardware_spi
 	hardware_i2c
 	tinyusb_device
 )
 
+pico_generate_pio_header(fuzix ${CMAKE_CURRENT_LIST_DIR}/psram_spi.pio)
+
+target_compile_definitions(fuzix PRIVATE
+	PSRAM_MUTEX
+	PSRAM_PIN_CS=20
+	PSRAM_PIN_SCK=21
+	PSRAM_PIN_MOSI=2
+	PSRAM_PIN_MISO=3
+)
+
 pico_set_float_implementation(fuzix none)
 pico_set_double_implementation(fuzix none)
 pico_add_extra_outputs(fuzix)
-

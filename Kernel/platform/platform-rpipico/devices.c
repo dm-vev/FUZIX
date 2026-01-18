@@ -5,6 +5,7 @@
 #include <blkdev.h>
 #include <tty.h>
 #include <devtty.h>
+#include <devrd.h>
 #include <dev/devsd.h>
 #include <printf.h>
 #include "globals.h"
@@ -28,7 +29,12 @@ struct devsw dev_tab[] =  /* The device driver switch table */
   {  no_open,     no_close,   no_rdwr,   no_rdwr,  no_ioctl  },
   /* 4: /dev/mem etc	System devices (one offs) */
   {  no_open,      sys_close,    sys_read, sys_write, sys_ioctl  },
-  /* Pack to 7 with nxio if adding private devices and start at 8 */
+  /* 5-7: unused */
+  {  no_open,      no_close,   no_rdwr,   no_rdwr,  no_ioctl  },
+  {  no_open,      no_close,   no_rdwr,   no_rdwr,  no_ioctl  },
+  {  no_open,      no_close,   no_rdwr,   no_rdwr,  no_ioctl  },
+  /* 8: /dev/rd? - PSRAM-backed RAM disk */
+  {  rd_open,      no_close,   rd_read,   rd_write, no_ioctl  },
 };
 
 static absolute_time_t now;
@@ -85,6 +91,7 @@ void device_init(void)
 #ifdef CONFIG_NET
 	netdev_init();
 #endif
+	psram_dev_init();
     sd_rawinit();
     devsd_init();
 }

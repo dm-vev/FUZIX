@@ -72,6 +72,22 @@
 /* Built in NAND flash. Warning, it's unstable. */
 //#define CONFIG_PICO_FLASH
 
+/* PicoCalc onboard PSRAM */
+#define CONFIG_PSRAM
+#define CONFIG_RAMDISK
+#define PSRAM_SIZE_BYTES (8 * 1024 * 1024)
+#define PSRAM_FB_WIDTH 320
+#define PSRAM_FB_HEIGHT 320
+#define PSRAM_FB_BPP 3
+#define PSRAM_FB_SIZE_BYTES (PSRAM_FB_WIDTH * PSRAM_FB_HEIGHT * PSRAM_FB_BPP)
+#define PSRAM_FB_PAGES ((PSRAM_FB_SIZE_BYTES + 4095) >> 12)
+#define DEV_RD_ROM_PAGES 0
+#define DEV_RD_RAM_PAGES ((PSRAM_SIZE_BYTES >> 12) - PSRAM_FB_PAGES)
+#define DEV_RD_ROM_START 0
+#define DEV_RD_RAM_START ((uint32_t)PSRAM_FB_PAGES << 12)
+#define DEV_RD_ROM_SIZE  0
+#define DEV_RD_RAM_SIZE  ((uint32_t)DEV_RD_RAM_PAGES << 12)
+
 /* Program layout */
 
 #define UDATA_BLKS  3
@@ -159,4 +175,3 @@ extern uint8_t progbase[USERMEM];
 
 #endif
 // vim: sw=4 ts=4 et
-
