@@ -11,3 +11,8 @@
 /ntpdate
 /htget
 /tinyirc
+/pppd-fuzix
+/route
+/netstat
+/arp
+/nc

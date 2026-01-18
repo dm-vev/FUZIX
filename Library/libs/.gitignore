@@ -8,3 +8,4 @@ m6809.lib
 termcap*.lib
 readline*.lib
 m*.lib
+*_armm0.s
