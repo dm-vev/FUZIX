@@ -11,6 +11,7 @@ SRCSNS = \
 	false.c \
 	groups.c \
 	head.c \
+	hostname.c \
 	init.c \
 	kill.c \
 	killall.c \

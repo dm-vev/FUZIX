@@ -106,6 +106,7 @@ bget ../../../Standalone/filesystem-src/etc-files/inittab
 bget ../../../Standalone/filesystem-src/etc-files/motd
 bget ../../../Standalone/filesystem-src/etc-files/mtab
 bget ../../../Standalone/filesystem-src/etc-files/passwd
+bget ../../../Standalone/filesystem-src/etc-files/hostname
 bget ../../../Standalone/filesystem-src/etc-files/rc
 bget ../../../Standalone/filesystem-src/etc-files/rc.halt
 bget ../../../Standalone/filesystem-src/etc-files/rc.reboot
@@ -129,6 +130,7 @@ chmod 0644 inittab
 chmod 0644 motd
 chmod 0644 mtab
 chmod 0644 passwd
+chmod 0644 hostname
 chmod 0644 termcap
 chmod 0644 netrc
 chmod 0644 resolv.conf
@@ -169,6 +171,7 @@ bget ../../../Applications/util/fsck
 bget ../../../Applications/util/fsck-fuzix
 bget ../../../Applications/util/grep
 bget ../../../Applications/util/head
+bget ../../../Applications/util/hostname
 bget ../../../Applications/util/id
 bget ../../../Applications/util/kill
 bget ../../../Applications/util/killall
@@ -259,6 +262,7 @@ chmod 0755 fsck
 chmod 0755 fsck-fuzix
 chmod 0755 grep
 chmod 0755 head
+chmod 0755 hostname
 chmod 0755 id
 chmod 0755 kill
 chmod 0755 killall
