@@ -32,7 +32,9 @@ mkdir /var/run
 
 cd /usr
 mkdir lib
+mkdir bin
 chmod 0755 lib
+chmod 0755 bin
 
 cd /
 cd /dev
@@ -89,6 +91,7 @@ mknod proc  20666 1027
 mknod mem   20660 1028
 mknod rtc   20600 1029
 mknod sys   20644 1030
+mknod net   20666 1089
 mknod i2c   20600 1031
 mknod gpio  20600 1032
 
@@ -107,6 +110,8 @@ bget ../../../Standalone/filesystem-src/etc-files/rc
 bget ../../../Standalone/filesystem-src/etc-files/rc.halt
 bget ../../../Standalone/filesystem-src/etc-files/rc.reboot
 bget ../../../Standalone/filesystem-src/etc-files/termcap
+bget ../../../Applications/netd/netrc
+bget ../../../Applications/netd/resolv.conf
 chmod 0644 fstab
 chmod 0644 group
 chmod 0644 inittab
@@ -114,6 +119,8 @@ chmod 0644 motd
 chmod 0644 mtab
 chmod 0644 passwd
 chmod 0644 termcap
+chmod 0644 netrc
+chmod 0644 resolv.conf
 chmod 0755 rc
 chmod 0755 rc.halt
 chmod 0755 rc.reboot
@@ -382,6 +389,29 @@ bget ../../../Library/libs/liberror.txt
 bget ../../../Applications/util/tchelp
 chmod 0644 liberror.txt
 chmod 0755 tchelp
+
+cd /usr/bin
+bget ../../../Applications/netd/netd-slip
+bget ../../../Applications/netd/telnet
+bget ../../../Applications/netd/echoping
+bget ../../../Applications/netd/dig
+bget ../../../Applications/netd/httpd
+bget ../../../Applications/netd/ping
+bget ../../../Applications/netd/ntpdate
+bget ../../../Applications/netd/htget
+bget ../../../Applications/netd/tinyirc
+bget ../../../Applications/netd/ifconfig
+
+chmod 0755 netd-slip
+chmod 0755 telnet
+chmod 0755 echoping
+chmod 0755 dig
+chmod 0755 httpd
+chmod 0755 ping
+chmod 0755 ntpdate
+chmod 0755 htget
+chmod 0755 tinyirc
+chmod 0755 ifconfig
 
 cd /usr
 mkdir games
