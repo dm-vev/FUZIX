@@ -45,17 +45,17 @@ static void devtty_map_extra_ports(void)
 {
 #if NUM_DEV_TTY_EXTRA >= 1
     /* /dev/ttyS0 */
-    const int minor = NUM_DEV_TTY - NUM_DEV_TTY_EXTRA + 1;
-    ttymap[minor].tty = 1; /* UART0 */
-    ttymap[minor].drv = TTYDRV_UART;
-    termios_mask[minor] = CSIZE | CBAUD | PARENB | PARODD | _CSYS;
+    const int minor0 = NUM_DEV_TTY - NUM_DEV_TTY_EXTRA + 1;
+    ttymap[minor0].tty = 1; /* UART0 */
+    ttymap[minor0].drv = TTYDRV_UART;
+    termios_mask[minor0] = CSIZE | CBAUD | PARENB | PARODD | _CSYS;
 #endif
 #if NUM_DEV_TTY_EXTRA >= 2
     /* /dev/ttyS1 */
-    const int minor = NUM_DEV_TTY - NUM_DEV_TTY_EXTRA + 2;
-    ttymap[minor].tty = 2; /* UART1 */
-    ttymap[minor].drv = TTYDRV_UART;
-    termios_mask[minor] = CSIZE | CBAUD | PARENB | PARODD | _CSYS;
+    const int minor1 = NUM_DEV_TTY - NUM_DEV_TTY_EXTRA + 2;
+    ttymap[minor1].tty = 2; /* UART1 */
+    ttymap[minor1].drv = TTYDRV_UART;
+    termios_mask[minor1] = CSIZE | CBAUD | PARENB | PARODD | _CSYS;
 #endif
 }
 
