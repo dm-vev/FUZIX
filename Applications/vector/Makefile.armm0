@@ -1,0 +1,23 @@
+ROOT = ../..
+include $(ROOT)/Target/rules.armm0
+
+APP = vector
+SRCS = \
+	vector.c
+OBJS = $(SRCS:.c=.o)
+
+all: $(APP) size.report
+
+$(APP): $(CRT0) $(OBJS)
+	$(LINKER) $^ -o $@.debug -lm$(PLATFORM) $(LINKER_OPT)
+	$(STRIP) $(STRIP_OPT) -o $@ $@.debug
+
+size.report: $(APP)
+	ls -l $< > $@
+
+clean:
+	rm -f $(OBJS) $(APP) *.debug *.bin *.data *.text size.report
+
+.c.o:
+	$(CC) $(CFLAGS) $(COPT) -c -o $@ $<
+
