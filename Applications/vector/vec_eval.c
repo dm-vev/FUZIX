@@ -1104,6 +1104,49 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 			goto done;
 		}
 
+		if (!strcmp(name, "roots") && !(argc == 1 && args[0].kind == VEC_VALUE_ARRAY)) {
+			if (argc < 3 || argc > 4) {
+				snprintf(err, errsz, "eval: roots(expr, xmin, xmax[, n])");
+				goto fail;
+			}
+			if (args[0].kind != VEC_VALUE_EXPR ||
+			    args[1].kind != VEC_VALUE_NUMBER ||
+			    args[2].kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: roots(expr, xmin, xmax[, n])");
+				goto fail;
+			}
+			double x_min = vec_number_float64(args[1].num);
+			double x_max = vec_number_float64(args[2].num);
+			if (x_min >= x_max) {
+				snprintf(err, errsz, "eval: roots expects xmin < xmax");
+				goto fail;
+			}
+			int n = 256;
+			if (argc == 4) {
+				if (args[3].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: roots(expr, xmin, xmax[, n])");
+					goto fail;
+				}
+				double nn = vec_number_float64(args[3].num);
+				if (isnan(nn) || isinf(nn) || nn != trunc_d(nn)) {
+					snprintf(err, errsz, "eval: expected integer");
+					goto fail;
+				}
+				if (nn < 8 || nn > 4096) {
+					snprintf(err, errsz, "eval: roots n must be 8..4096");
+					goto fail;
+				}
+				n = (int)nn;
+			}
+
+			double *roots = NULL;
+			size_t nroots = 0;
+			if (vec_numeric_roots_scan_bisection(e, args[0].expr, x_min, x_max, n, &roots, &nroots, err, errsz) != 0)
+				goto fail;
+			*out = vec_value_array(roots, nroots);
+			goto done;
+		}
+
 		/* Complex helpers. */
 		if (!strcmp(name, "rect") && argc == 2 && args[0].kind == VEC_VALUE_NUMBER && args[1].kind == VEC_VALUE_NUMBER) {
 			double r = vec_number_float64(args[0].num);
