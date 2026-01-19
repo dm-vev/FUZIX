@@ -122,7 +122,21 @@
 
 #define USERMEM ((TOTALMEM-NETMEM)*1024)
 
-#define PROGSIZE (65536 - UDATA_SIZE)
+/* Per-process address space.
+ *
+ * Historically this target used a 64kB per-process userspace. On larger-memory
+ * boards (e.g. pico2) we can afford to raise this limit, which allows larger
+ * binaries and more heap/stack headroom.
+ */
+#ifndef PROG_MAX
+#if TOTALMEM >= 256
+#define PROG_MAX 131072
+#else
+#define PROG_MAX 65536
+#endif
+#endif
+
+#define PROGSIZE (PROG_MAX - UDATA_SIZE)
 extern uint8_t progbase[USERMEM];
 #define udata (*(struct u_data*)progbase)
 
