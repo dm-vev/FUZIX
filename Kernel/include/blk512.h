@@ -14,6 +14,8 @@
 #define BLK_TO_OFFSET(x)	((x) << BLKSHIFT)
 
 #define SMOUNTED  12742   /* Magic number to specify mounted filesystem */
+/* v2 (largefs): 32-bit block numbers + triple indirect */
+#define SMOUNTED_V2 12744
 
 /* Size of a directory. They can contain padding internally but a disk block
    must be divisible exactly into directory entries */

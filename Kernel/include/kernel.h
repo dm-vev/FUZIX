@@ -173,10 +173,14 @@ struct tms {
 #define M_TIME 2
 #define C_TIME 4
 
-typedef int32_t off_t;	/* 32MB file and fs size limit */
+typedef int32_t off_t;
 typedef uint32_t uoff_t;	/* Internal use so we can keep the compiler happy */
 
+#ifdef CONFIG_LARGEFS
+typedef uint32_t blkno_t;
+#else
 typedef uint16_t blkno_t;    /* Can have 65536 512-byte blocks in filesystem */
+#endif
 #define NULLBLK ((blkno_t)-1)
 
 #if (BLKSIZE == 400)
@@ -1320,4 +1324,3 @@ extern arg_t _ftruncate(void);    /* FUZIX system call 67 */
 #endif
 
 #endif /* __FUZIX__KERNEL_DOT_H__ */
-
