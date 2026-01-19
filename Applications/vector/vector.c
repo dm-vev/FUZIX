@@ -41,6 +41,7 @@ struct ui_state {
 	int help_top;
 
 	char message[64];
+	char edit_var[32];
 
 	char input[256];
 	size_t input_len;
@@ -151,12 +152,54 @@ static void ui_header_text(struct ui_state *u, char *out, size_t outsz)
 	ui_clip_cols(u, out, outsz);
 }
 
-static void ui_status_text(struct ui_state *u, char *out, size_t outsz)
+static void ui_status_text(struct ui_state *u, char *out, size_t outsz, int *cursor_col, int *cursor_on)
 {
 	if (!u || !out || outsz == 0)
 		return;
 
 	out[0] = 0;
+	if (cursor_col)
+		*cursor_col = -1;
+	if (cursor_on)
+		*cursor_on = 0;
+
+	if (u->edit_var[0]) {
+		char prefix[64];
+		snprintf(prefix, sizeof(prefix), "edit %s = ", u->edit_var);
+		size_t prefix_len = strlen(prefix);
+
+		size_t visible = 0;
+		if (u->cols > 0 && (size_t)u->cols > prefix_len)
+			visible = (size_t)u->cols - prefix_len;
+
+		size_t start = 0;
+		if (visible > 0 && u->cursor > visible - 1) {
+			start = u->cursor - (visible - 1);
+		}
+		if (start > u->input_len)
+			start = u->input_len;
+
+		snprintf(out, outsz, "%s%.*s", prefix, (int)visible, u->input + start);
+
+		if (cursor_col && cursor_on && u->cols > 0) {
+			int col = (int)prefix_len + (int)(u->cursor - start);
+			if (col < (int)prefix_len)
+				col = (int)prefix_len;
+			if (col > u->cols - 1)
+				col = u->cols - 1;
+			*cursor_col = col;
+			*cursor_on = 1;
+		}
+
+		if (u->message[0]) {
+			size_t n = strlen(out);
+			if (n + 3 < outsz)
+				snprintf(out + n, outsz - n, " | %s", u->message);
+		}
+		ui_clip_cols(u, out, outsz);
+		return;
+	}
+
 	switch (u->tab) {
 	case TAB_PLOT: {
 		char xmin[16], xmax[16], ymin[16], ymax[16];
@@ -282,6 +325,51 @@ static void ui_delete(struct ui_state *u)
 }
 
 static void ui_switch_tab(struct ui_state *u, enum vec_tab tab);
+
+static vec_var *ui_stack_var_at(struct ui_state *u, int idx)
+{
+	if (!u)
+		return NULL;
+	int i = 0;
+	for (vec_var *v = u->env.vars; v; v = v->next, i++) {
+		if (i == idx)
+			return v;
+	}
+	return NULL;
+}
+
+static int ui_stack_var_count(struct ui_state *u)
+{
+	if (!u)
+		return 0;
+	int total = 0;
+	for (vec_var *v = u->env.vars; v; v = v->next)
+		total++;
+	return total;
+}
+
+static void ui_start_edit_var(struct ui_state *u, const char *name, const vec_value *v)
+{
+	if (!u || !name || !*name)
+		return;
+
+	snprintf(u->edit_var, sizeof(u->edit_var), "%s", name);
+	if (v && v->kind == VEC_VALUE_NUMBER) {
+		char buf[64];
+		ui_set_input(u, vec_number_string(v->num, u->env.prec, buf, sizeof(buf)));
+	} else {
+		ui_set_input(u, "");
+	}
+	ui_set_message(u, "Enter apply | Esc cancel");
+}
+
+static void ui_cancel_edit(struct ui_state *u)
+{
+	if (!u)
+		return;
+	u->edit_var[0] = 0;
+	ui_set_input(u, "");
+}
 
 static void ui_handle_command(struct ui_state *u, const char *cmdline)
 {
@@ -603,6 +691,8 @@ static void ui_render(struct ui_state *u)
 	struct vec_color status_bg = {0x22, 0x22, 0x22};
 
 	char line[256];
+	int status_cursor_col = -1;
+	int status_cursor_on = 0;
 
 	ui_header_text(u, line, sizeof(line));
 	(void)vec_draw_text_row(&u->fb, 0, line, fg, header_bg, -1, 0);
@@ -624,8 +714,8 @@ static void ui_render(struct ui_state *u)
 		}
 	}
 
-	ui_status_text(u, line, sizeof(line));
-	(void)vec_draw_text_row(&u->fb, u->rows - 1, line, fg, status_bg, -1, 0);
+	ui_status_text(u, line, sizeof(line), &status_cursor_col, &status_cursor_on);
+	(void)vec_draw_text_row(&u->fb, u->rows - 1, line, fg, status_bg, status_cursor_col, status_cursor_on);
 
 	if (u->fb.mode == FB_MODE_MEMORY)
 		(void)vec_fb_flush(&u->fb, NULL);
@@ -761,6 +851,11 @@ static void ui_render_help(struct ui_state *u)
 		"  arrows pan   +/- zoom",
 		"  a autoscale",
 		"",
+		"stack:",
+		"  Up/Down select",
+		"  Enter   edit variable",
+		"  e       edit variable",
+		"",
 		"commands:",
 		"  :help   toggle this help",
 		"  :exact  exact rationals",
@@ -795,6 +890,10 @@ static void ui_switch_tab(struct ui_state *u, enum vec_tab tab)
 {
 	if (!u)
 		return;
+	if (tab == u->tab && !u->edit_var[0])
+		return;
+	if (u->edit_var[0])
+		ui_cancel_edit(u);
 	u->tab = tab;
 	u->show_help = 0;
 
@@ -840,6 +939,56 @@ static void ui_handle_help_key(struct ui_state *u, vec_key k)
 	}
 }
 
+static void ui_handle_edit_key(struct ui_state *u, vec_key k)
+{
+	if (!u)
+		return;
+	switch (k.kind) {
+	case VEC_KEY_ESC:
+		ui_cancel_edit(u);
+		ui_set_message(u, "edit canceled");
+		break;
+	case VEC_KEY_ENTER: {
+		char name[sizeof(u->edit_var)];
+		char expr[sizeof(u->input)];
+		snprintf(name, sizeof(name), "%s", u->edit_var);
+		snprintf(expr, sizeof(expr), "%s", u->input);
+		ui_cancel_edit(u);
+		ui_set_message(u, "");
+		char line[320];
+		snprintf(line, sizeof(line), "%s=%s", name, expr);
+		ui_eval_line(u, line);
+		break;
+	}
+	case VEC_KEY_BACKSPACE:
+		ui_backspace(u);
+		break;
+	case VEC_KEY_DELETE:
+		ui_delete(u);
+		break;
+	case VEC_KEY_LEFT:
+		if (u->cursor)
+			u->cursor--;
+		break;
+	case VEC_KEY_RIGHT:
+		if (u->cursor < u->input_len)
+			u->cursor++;
+		break;
+	case VEC_KEY_HOME:
+		u->cursor = 0;
+		break;
+	case VEC_KEY_END:
+		u->cursor = u->input_len;
+		break;
+	case VEC_KEY_RUNE:
+		if (k.r >= 0x20 && k.r != 0x7f)
+			ui_insert_char(u, (int)k.r);
+		break;
+	default:
+		break;
+	}
+}
+
 static void ui_handle_key(struct ui_state *u, vec_key k)
 {
 	if (!u)
@@ -868,6 +1017,10 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 		ui_handle_help_key(u, k);
 		return;
 	}
+	if (u->edit_var[0]) {
+		ui_handle_edit_key(u, k);
+		return;
+	}
 
 	switch (k.kind) {
 	case VEC_KEY_ESC:
@@ -876,6 +1029,11 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 	case VEC_KEY_ENTER:
 		if (u->tab == TAB_TERMINAL)
 			ui_submit(u);
+		else if (u->tab == TAB_STACK) {
+			vec_var *v = ui_stack_var_at(u, u->stack_sel);
+			if (v && v->name)
+				ui_start_edit_var(u, v->name, &v->value);
+		}
 		break;
 	case VEC_KEY_TAB:
 		break;
@@ -916,10 +1074,17 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 	case VEC_KEY_HOME:
 		if (u->tab == TAB_TERMINAL)
 			u->cursor = 0;
+		else if (u->tab == TAB_STACK)
+			u->stack_sel = 0;
 		break;
 	case VEC_KEY_END:
 		if (u->tab == TAB_TERMINAL)
 			u->cursor = u->input_len;
+		else if (u->tab == TAB_STACK) {
+			int total = ui_stack_var_count(u);
+			if (total > 0)
+				u->stack_sel = total - 1;
+		}
 		break;
 	case VEC_KEY_UP:
 		if (u->tab == TAB_TERMINAL)
@@ -935,8 +1100,11 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 	case VEC_KEY_DOWN:
 		if (u->tab == TAB_TERMINAL)
 			ui_hist_down(u);
-		else if (u->tab == TAB_STACK)
-			u->stack_sel++;
+		else if (u->tab == TAB_STACK) {
+			int total = ui_stack_var_count(u);
+			if (u->stack_sel + 1 < total)
+				u->stack_sel++;
+		}
 		else if (u->tab == TAB_PLOT) {
 			double dy = (u->y_max - u->y_min) * 0.1;
 			u->y_min -= dy;
@@ -946,6 +1114,12 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 	case VEC_KEY_RUNE:
 		if (u->tab != TAB_TERMINAL && k.r == 'q') {
 			running = 0;
+			break;
+		}
+		if (u->tab == TAB_STACK && (k.r == 'e' || k.r == 'E')) {
+			vec_var *v = ui_stack_var_at(u, u->stack_sel);
+			if (v && v->name)
+				ui_start_edit_var(u, v->name, &v->value);
 			break;
 		}
 		if (u->tab == TAB_TERMINAL && k.r >= 0x20 && k.r != 0x7f)
