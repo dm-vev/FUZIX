@@ -4,6 +4,7 @@
 #include <exec.h>
 #include "picosdk.h"
 #include "pico_ioctl.h"
+#include "i2ckbd.h"
 #include <pico/multicore.h>
 #include <pico/bootrom.h>
 #include <hardware/watchdog.h>
@@ -37,13 +38,23 @@ void plt_monitor(void)
 
 int plt_dev_ioctl(uarg_t request, char *data)
 {
-    used(data);
-    if (request == PICOIOC_FLASH)
-    {
+    switch (request) {
+    case PICOIOC_FLASH:
         reset_usb_boot(0, 0);
         return 0;
+    case PICOIOC_GET_STATUS: {
+        struct picocalc_status st;
+        if (!valaddr_w((unsigned char *)data, sizeof(st)))
+            return -1;
+        picocalc_status_snapshot(&st);
+        if (uput(&st, data, sizeof(st)))
+            return -1;
+        return 0;
     }
-    return -1;
+    default:
+        udata.u_error = EINVAL;
+        return -1;
+    }
 }
 
 uaddr_t pagemap_base(void)
@@ -75,5 +86,4 @@ usize_t valaddr_w(const uint8_t *pp, usize_t l)
 }
 
 /* vim: sw=4 ts=4 et: */
-
 

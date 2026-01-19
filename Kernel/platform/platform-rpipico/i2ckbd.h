@@ -19,4 +19,7 @@ void init_i2c_kbd();
 int read_i2c_kbd();
 int I2C_Send_RegData(int i2caddr,int reg,char command);
 
+struct picocalc_status;
+void picocalc_status_snapshot(struct picocalc_status *out);
+
 #endif
