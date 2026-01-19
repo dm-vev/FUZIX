@@ -1130,6 +1130,69 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 		goto done;
 	}
 
+	if (!strcmp(name, "svd")) {
+		if (argc != 1 || args[0].kind != VEC_VALUE_MATRIX) {
+			snprintf(err, errsz, "eval: svd(A)");
+			goto fail;
+		}
+		const vec_value *A = &args[0];
+
+		if (A->cols > 64) {
+			snprintf(err, errsz, "eval: svd supports n<=64");
+			goto fail;
+		}
+
+		double *u = NULL;
+		double *s = NULL;
+		double *v = NULL;
+		vec_mat_err rc = vec_svd_thin(A->rows, A->cols, A->mat, &u, &s, &v);
+		if (rc == VEC_MAT_ERR_NOMEM) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		if (rc != VEC_MAT_OK) {
+			snprintf(err, errsz, "eval: svd: invalid matrix");
+			goto fail;
+		}
+
+		size_t sn = (size_t)A->cols;
+		double *scopy = sn ? malloc(sizeof(scopy[0]) * sn) : NULL;
+		if (sn && !scopy) {
+			free(u);
+			free(v);
+			free(s);
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		if (sn)
+			memcpy(scopy, s, sizeof(scopy[0]) * sn);
+
+		if (vec_env_set_var(e, "_U", vec_value_matrix(A->rows, A->cols, u)) != 0) {
+			free(u);
+			free(v);
+			free(s);
+			free(scopy);
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		if (vec_env_set_var(e, "_V", vec_value_matrix(A->cols, A->cols, v)) != 0) {
+			free(v);
+			free(s);
+			free(scopy);
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		if (vec_env_set_var(e, "_S", vec_value_array(scopy, sn)) != 0) {
+			free(s);
+			free(scopy);
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+
+		*out = vec_value_array(s, sn);
+		goto done;
+	}
+
 	/* Vector builtins (Array helpers). */
 	if (!strcmp(name, "get")) {
 		if (argc != 2) {
