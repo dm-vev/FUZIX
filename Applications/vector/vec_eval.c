@@ -968,10 +968,6 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 			if (!strcmp(name, "tan")) {
 				vec_complex s = c_sin(z);
 				vec_complex c = c_cos(z);
-				if (c_is_zero(c)) {
-					snprintf(err, errsz, "eval: tan: division by zero");
-					goto fail;
-				}
 				vec_complex w = c_div(s, c);
 				*out = vec_value_complex(w.re, w.im);
 				goto done;
