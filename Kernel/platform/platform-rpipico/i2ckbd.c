@@ -3,6 +3,41 @@
 #include "pico_ioctl.h"
 
 static uint8_t i2c_inited = 0;
+static spin_lock_t *i2c_kbd_lock;
+
+#define PICOCALC_KBD_RING_SIZE 64
+#define PICOCALC_KBD_RING_MASK (PICOCALC_KBD_RING_SIZE - 1)
+
+#if (PICOCALC_KBD_RING_SIZE & PICOCALC_KBD_RING_MASK) != 0
+#error "PICOCALC_KBD_RING_SIZE must be power of two"
+#endif
+
+static uint8_t kbd_ring[PICOCALC_KBD_RING_SIZE];
+static volatile uint32_t kbd_head;
+static volatile uint32_t kbd_tail;
+
+static void kbd_ring_put(uint8_t c)
+{
+    uint32_t head = kbd_head;
+    uint32_t next = (head + 1) & PICOCALC_KBD_RING_MASK;
+    if (next == kbd_tail) {
+        return;
+    }
+    kbd_ring[head] = c;
+    __dmb();
+    kbd_head = next;
+}
+
+static int kbd_ring_get(void)
+{
+    uint32_t tail = kbd_tail;
+    if (tail == kbd_head)
+        return -1;
+    uint8_t c = kbd_ring[tail];
+    __dmb();
+    kbd_tail = (tail + 1) & PICOCALC_KBD_RING_MASK;
+    return (int)c;
+}
 
 static struct picocalc_status status_cache = {
     .battery_percent = 0xFF,
@@ -13,8 +48,8 @@ static struct picocalc_status status_cache = {
     .reserved = { 0 },
 };
 
-static uint16_t status_ticks;
 static uint8_t status_phase;
+static int ctrlheld;
 
 void init_i2c_kbd(){
     gpio_set_function(I2C_KBD_SCL, GPIO_FUNC_I2C);
@@ -23,7 +58,33 @@ void init_i2c_kbd(){
     gpio_pull_up(I2C_KBD_SCL);
     gpio_pull_up(I2C_KBD_SDA);
 
+    int spin_id = spin_lock_claim_unused(true);
+    i2c_kbd_lock = spin_lock_init(spin_id);
+    kbd_head = 0;
+    kbd_tail = 0;
+    status_phase = 0;
+    ctrlheld = 0;
     i2c_inited = 1;
+}
+
+static int i2c_kbd_read_fifo(uint16_t *out)
+{
+    int retval;
+    uint8_t reg = 0x09;
+    uint8_t resp[2] = {0};
+
+    uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
+    retval = i2c_write_timeout_us(I2C_KBD_MOD, I2C_KBD_ADDR, &reg, 1, false, I2C_KBD_TIMEOUT_US);
+    if (retval != 1) {
+        spin_unlock(i2c_kbd_lock, spin);
+        return -1;
+    }
+    retval = i2c_read_timeout_us(I2C_KBD_MOD, I2C_KBD_ADDR, resp, sizeof(resp), false, I2C_KBD_TIMEOUT_US);
+    spin_unlock(i2c_kbd_lock, spin);
+    if (retval != (int)sizeof(resp))
+        return -1;
+    *out = (uint16_t)resp[0] | ((uint16_t)resp[1] << 8);
+    return 0;
 }
 
 static int i2c_kbd_read_reg_u8(uint8_t reg, uint8_t *out)
@@ -31,10 +92,14 @@ static int i2c_kbd_read_reg_u8(uint8_t reg, uint8_t *out)
     int retval;
     uint8_t resp[2] = {0};
 
+    uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
     retval = i2c_write_timeout_us(I2C_KBD_MOD, I2C_KBD_ADDR, &reg, 1, false, I2C_KBD_TIMEOUT_US);
-    if (retval != 1)
+    if (retval != 1) {
+        spin_unlock(i2c_kbd_lock, spin);
         return -1;
+    }
     retval = i2c_read_timeout_us(I2C_KBD_MOD, I2C_KBD_ADDR, resp, sizeof(resp), false, I2C_KBD_TIMEOUT_US);
+    spin_unlock(i2c_kbd_lock, spin);
     if (retval != (int)sizeof(resp))
         return -1;
     if (resp[0] != reg)
@@ -43,13 +108,9 @@ static int i2c_kbd_read_reg_u8(uint8_t reg, uint8_t *out)
     return 0;
 }
 
-static void status_poll_tick(void)
+void picocalc_status_poll_once(void)
 {
     uint8_t val;
-
-    if (++status_ticks < TICKSPERSEC)
-        return;
-    status_ticks = 0;
 
     switch (status_phase) {
     case 0:
@@ -60,90 +121,107 @@ static void status_poll_tick(void)
             uint8_t pcnt = val & 0x7F;
             if (pcnt > 100)
                 pcnt = 100;
+            uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
             status_cache.battery_percent = pcnt;
             status_cache.battery_flags = flags;
+            spin_unlock(i2c_kbd_lock, spin);
         }
         break;
     case 1:
-        if (i2c_kbd_read_reg_u8(0x01, &val) == 0)
+        if (i2c_kbd_read_reg_u8(0x01, &val) == 0) {
+            uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
             status_cache.fw_version = val;
+            spin_unlock(i2c_kbd_lock, spin);
+        }
         break;
     case 2:
-        if (i2c_kbd_read_reg_u8(0x05, &val) == 0)
+        if (i2c_kbd_read_reg_u8(0x05, &val) == 0) {
+            uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
             status_cache.lcd_backlight = val;
+            spin_unlock(i2c_kbd_lock, spin);
+        }
         break;
     case 3:
-        if (i2c_kbd_read_reg_u8(0x0A, &val) == 0)
+        if (i2c_kbd_read_reg_u8(0x0A, &val) == 0) {
+            uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
             status_cache.kbd_backlight = val;
+            spin_unlock(i2c_kbd_lock, spin);
+        }
         break;
     }
 
     status_phase = (status_phase + 1) & 3;
 }
 
-int read_i2c_kbd(){
-	static int ctrlheld=0;
-    int retval;
-    uint16_t buff = 0;
-    uint8_t reg = 0x09;
-    uint8_t resp[2] = {0};
-    int c = -1;
+void picocalc_kbd_poll(void)
+{
+    if (i2c_inited == 0)
+        return;
 
-    if(i2c_inited == 0) return -1;
+    for (int iter = 0; iter < 4; iter++) {
+        uint16_t buff = 0;
+        if (i2c_kbd_read_fifo(&buff) < 0)
+            return;
+        if (buff == 0)
+            return;
 
-    retval = i2c_write_timeout_us(I2C_KBD_MOD, I2C_KBD_ADDR, &reg, 1, false, I2C_KBD_TIMEOUT_US);
-    if (retval != 1)
-        return -1;
-    retval = i2c_read_timeout_us(I2C_KBD_MOD, I2C_KBD_ADDR, resp, sizeof(resp), false, I2C_KBD_TIMEOUT_US);
-    if (retval != (int)sizeof(resp))
-        return -1;
-    buff = (uint16_t)resp[0] | ((uint16_t)resp[1] << 8);
-
-    if (buff == 0) {
-        status_poll_tick();
-        return -1;
-    }
-    if(buff!=0) {
-        if (buff == 0xA503)ctrlheld = 0;
-        else if (buff == 0xA502) {
-            ctrlheld = 1;
-        }else if((buff & 0xff)==1) {//pressed
-            c = buff >> 8;
-            int realc = -1;
-            switch (c) {
-                case 0xA1:
-                case 0xA2:
-                case 0xA3:
-                case 0xA4:
-                case 0xA5:
-                    realc = -1;//skip shift alt ctrl keys
-                    break;
-                default:
-                    realc = c;
-                    break;
-            }
-            c = realc;
-            if(c>='a' && c<='z' && ctrlheld)c=c-'a'+1;
+        if (buff == 0xA503) {
+            ctrlheld = 0;
+            continue;
         }
-        return c;
+        if (buff == 0xA502) {
+            ctrlheld = 1;
+            continue;
+        }
+
+        if ((buff & 0xff) != 1) {
+            continue;
+        }
+
+        int c = buff >> 8;
+        switch (c) {
+        case 0xA1:
+        case 0xA2:
+        case 0xA3:
+        case 0xA4:
+        case 0xA5:
+            continue;
+        default:
+            break;
+        }
+        if (c >= 'a' && c <= 'z' && ctrlheld)
+            c = c - 'a' + 1;
+
+        if (c >= 0 && c <= 0xFF)
+            kbd_ring_put((uint8_t)c);
     }
-    return -1;
+}
+
+int read_i2c_kbd(void)
+{
+    return kbd_ring_get();
 }
 
 void picocalc_status_snapshot(struct picocalc_status *out)
 {
-    irqflags_t irq = di();
+    if (i2c_inited == 0 || i2c_kbd_lock == NULL) {
+        memset(out, 0xFF, sizeof(*out));
+        out->battery_flags = 0;
+        return;
+    }
+    uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
     *out = status_cache;
-    irqrestore(irq);
+    spin_unlock(i2c_kbd_lock, spin);
 }
 
 int picocalc_set_lcd_backlight(uint8_t level)
 {
-    irqflags_t irq = di();
     int r = I2C_Send_RegData(I2C_KBD_ADDR, 0x05, (char)level);
-    if (r == 0)
+    if (r == 0) {
+        uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
         status_cache.lcd_backlight = level;
-    irqrestore(irq);
+        spin_unlock(i2c_kbd_lock, spin);
+    }
     return r;
 }
 
@@ -154,7 +232,9 @@ int I2C_Send_RegData(int i2caddr,int reg,char command){
     I2C_Send_Buffer[1]=command;
     uint8_t I2C_Sendlen=2;
 
+    uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
     retval=i2c_write_timeout_us(I2C_KBD_MOD, (uint8_t)i2caddr, (uint8_t *)I2C_Send_Buffer, I2C_Sendlen,false, I2C_KBD_TIMEOUT_US);
+    spin_unlock(i2c_kbd_lock, spin);
 
     if (retval != I2C_Sendlen)
         return -1;
