@@ -1,5 +1,6 @@
 #include "vec_eval.h"
 #include "vec_cas.h"
+#include "vec_matrix.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -1384,6 +1385,358 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 		goto fail;
 	}
 
+	/* Matrix builtins. */
+	if (argc == 1 && args[0].kind == VEC_VALUE_MATRIX) {
+		size_t n = 0;
+		if (args[0].rows > 0 && args[0].cols > 0)
+			n = (size_t)args[0].rows * (size_t)args[0].cols;
+
+		unary_d_fn fn = unary_builtin_find(name);
+		if (fn) {
+			double *m = n ? malloc(sizeof(m[0]) * n) : NULL;
+			if (n && !m) {
+				snprintf(err, errsz, "eval: out of memory");
+				goto fail;
+			}
+			for (size_t i = 0; i < n; i++)
+				m[i] = fn(args[0].mat[i]);
+			*out = vec_value_matrix(args[0].rows, args[0].cols, m);
+			goto done;
+		}
+		agg_d_fn agg = agg_builtin_find(name);
+		if (agg) {
+			*out = vec_value_number(vec_float(agg(args[0].mat, n)));
+			goto done;
+		}
+	}
+
+	if (!strcmp(name, "zeros") && argc == 2) {
+		if (args[0].kind != VEC_VALUE_NUMBER || args[1].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: zeros(rows, cols)");
+			goto fail;
+		}
+		int r = (int)vec_number_float64(args[0].num);
+		int c = (int)vec_number_float64(args[1].num);
+		double *m;
+		vec_mat_err mrc = vec_matrix_zeros(r, c, &m);
+		if (mrc == VEC_MAT_ERR_NOMEM) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		if (mrc != VEC_MAT_OK) {
+			snprintf(err, errsz, "eval: invalid matrix shape");
+			goto fail;
+		}
+		*out = vec_value_matrix(r, c, m);
+		goto done;
+	}
+
+	if (!strcmp(name, "ones") && argc == 2) {
+		if (args[0].kind != VEC_VALUE_NUMBER || args[1].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: ones(rows, cols)");
+			goto fail;
+		}
+		int r = (int)vec_number_float64(args[0].num);
+		int c = (int)vec_number_float64(args[1].num);
+		double *m;
+		vec_mat_err mrc = vec_matrix_ones(r, c, &m);
+		if (mrc == VEC_MAT_ERR_NOMEM) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		if (mrc != VEC_MAT_OK) {
+			snprintf(err, errsz, "eval: invalid matrix shape");
+			goto fail;
+		}
+		*out = vec_value_matrix(r, c, m);
+		goto done;
+	}
+
+	if (!strcmp(name, "eye") && argc == 1) {
+		if (args[0].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: eye(n)");
+			goto fail;
+		}
+		int n = (int)vec_number_float64(args[0].num);
+		double *m;
+		vec_mat_err mrc = vec_matrix_eye(n, &m);
+		if (mrc == VEC_MAT_ERR_NOMEM) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		if (mrc != VEC_MAT_OK) {
+			snprintf(err, errsz, "eval: invalid matrix shape");
+			goto fail;
+		}
+		*out = vec_value_matrix(n, n, m);
+		goto done;
+	}
+
+	if (!strcmp(name, "reshape") && argc == 3) {
+		if ((args[0].kind != VEC_VALUE_ARRAY && args[0].kind != VEC_VALUE_MATRIX) || args[1].kind != VEC_VALUE_NUMBER ||
+		    args[2].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: reshape(xs, rows, cols)");
+			goto fail;
+		}
+		int r = (int)vec_number_float64(args[1].num);
+		int c = (int)vec_number_float64(args[2].num);
+		size_t want = 0;
+		if (r > 0 && c > 0)
+			want = (size_t)r * (size_t)c;
+		const double *xs = NULL;
+		size_t have = 0;
+		if (args[0].kind == VEC_VALUE_ARRAY) {
+			xs = args[0].arr;
+			have = args[0].len;
+		} else {
+			xs = args[0].mat;
+			if (args[0].rows > 0 && args[0].cols > 0)
+				have = (size_t)args[0].rows * (size_t)args[0].cols;
+		}
+		if (r <= 0 || c <= 0 || have != want) {
+			snprintf(err, errsz, "eval: reshape: need len(xs)==rows*cols");
+			goto fail;
+		}
+		double *m = want ? malloc(sizeof(m[0]) * want) : NULL;
+		if (want && !m) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		memcpy(m, xs, sizeof(m[0]) * want);
+		*out = vec_value_matrix(r, c, m);
+		goto done;
+	}
+
+	if ((!strcmp(name, "T") || !strcmp(name, "transpose")) && argc == 1) {
+		if (args[0].kind != VEC_VALUE_MATRIX) {
+			snprintf(err, errsz, "eval: T(A)");
+			goto fail;
+		}
+		double *m;
+		vec_mat_err mrc = vec_matrix_transpose(args[0].rows, args[0].cols, args[0].mat, &m);
+		if (mrc == VEC_MAT_ERR_NOMEM) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		if (mrc != VEC_MAT_OK) {
+			snprintf(err, errsz, "eval: invalid matrix");
+			goto fail;
+		}
+		*out = vec_value_matrix(args[0].cols, args[0].rows, m);
+		goto done;
+	}
+
+	if (!strcmp(name, "det") && argc == 1) {
+		if (args[0].kind != VEC_VALUE_MATRIX) {
+			snprintf(err, errsz, "eval: det(A)");
+			goto fail;
+		}
+		double d = 0;
+		vec_mat_err mrc = vec_matrix_det(args[0].rows, args[0].cols, args[0].mat, &d);
+		if (mrc == VEC_MAT_ERR_NOMEM) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		if (mrc == VEC_MAT_ERR_SHAPE) {
+			snprintf(err, errsz, "eval: matrix shape mismatch");
+			goto fail;
+		}
+		if (mrc != VEC_MAT_OK) {
+			snprintf(err, errsz, "eval: invalid matrix");
+			goto fail;
+		}
+		*out = vec_value_number(vec_float(d));
+		goto done;
+	}
+
+	if (!strcmp(name, "inv") && argc == 1) {
+		if (args[0].kind != VEC_VALUE_MATRIX) {
+			snprintf(err, errsz, "eval: inv(A)");
+			goto fail;
+		}
+		double *m;
+		vec_mat_err mrc = vec_matrix_inv(args[0].rows, args[0].cols, args[0].mat, &m);
+		if (mrc == VEC_MAT_ERR_NOMEM) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		if (mrc == VEC_MAT_ERR_SHAPE) {
+			snprintf(err, errsz, "eval: matrix shape mismatch");
+			goto fail;
+		}
+		if (mrc == VEC_MAT_ERR_SINGULAR) {
+			snprintf(err, errsz, "eval: singular matrix");
+			goto fail;
+		}
+		if (mrc != VEC_MAT_OK) {
+			snprintf(err, errsz, "eval: invalid matrix");
+			goto fail;
+		}
+		*out = vec_value_matrix(args[0].rows, args[0].cols, m);
+		goto done;
+	}
+
+	if (!strcmp(name, "shape") && argc == 1) {
+		if (args[0].kind != VEC_VALUE_MATRIX) {
+			snprintf(err, errsz, "eval: shape(A)");
+			goto fail;
+		}
+		double *xs = malloc(sizeof(xs[0]) * 2);
+		if (!xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		xs[0] = (double)args[0].rows;
+		xs[1] = (double)args[0].cols;
+		*out = vec_value_array(xs, 2);
+		goto done;
+	}
+
+	if (!strcmp(name, "flatten") && argc == 1) {
+		if (args[0].kind != VEC_VALUE_MATRIX) {
+			snprintf(err, errsz, "eval: flatten(A)");
+			goto fail;
+		}
+		size_t n = (size_t)args[0].rows * (size_t)args[0].cols;
+		double *xs = n ? malloc(sizeof(xs[0]) * n) : NULL;
+		if (n && !xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		memcpy(xs, args[0].mat, sizeof(xs[0]) * n);
+		*out = vec_value_array(xs, n);
+		goto done;
+	}
+
+	if (!strcmp(name, "get") && argc == 3) {
+		if (args[0].kind != VEC_VALUE_MATRIX || args[1].kind != VEC_VALUE_NUMBER || args[2].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: get(A, row, col)");
+			goto fail;
+		}
+		size_t r, c;
+		if (vector_index(vec_number_float64(args[1].num), (size_t)args[0].rows, &r, err, errsz) != 0)
+			goto fail;
+		if (vector_index(vec_number_float64(args[2].num), (size_t)args[0].cols, &c, err, errsz) != 0)
+			goto fail;
+		*out = vec_value_number(vec_float(args[0].mat[r * (size_t)args[0].cols + c]));
+		goto done;
+	}
+
+	if (!strcmp(name, "set") && argc == 4) {
+		if (args[0].kind != VEC_VALUE_MATRIX || args[1].kind != VEC_VALUE_NUMBER || args[2].kind != VEC_VALUE_NUMBER ||
+		    args[3].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: set(A, row, col, value)");
+			goto fail;
+		}
+		size_t r, c;
+		if (vector_index(vec_number_float64(args[1].num), (size_t)args[0].rows, &r, err, errsz) != 0)
+			goto fail;
+		if (vector_index(vec_number_float64(args[2].num), (size_t)args[0].cols, &c, err, errsz) != 0)
+			goto fail;
+		size_t n = (size_t)args[0].rows * (size_t)args[0].cols;
+		double *m = n ? malloc(sizeof(m[0]) * n) : NULL;
+		if (n && !m) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		memcpy(m, args[0].mat, sizeof(m[0]) * n);
+		m[r * (size_t)args[0].cols + c] = vec_number_float64(args[3].num);
+		*out = vec_value_matrix(args[0].rows, args[0].cols, m);
+		goto done;
+	}
+
+	if (!strcmp(name, "row") && argc == 2) {
+		if (args[0].kind != VEC_VALUE_MATRIX || args[1].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: row(A, row)");
+			goto fail;
+		}
+		size_t r;
+		if (vector_index(vec_number_float64(args[1].num), (size_t)args[0].rows, &r, err, errsz) != 0)
+			goto fail;
+		size_t n = (size_t)args[0].cols;
+		double *xs = n ? malloc(sizeof(xs[0]) * n) : NULL;
+		if (n && !xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		memcpy(xs, &args[0].mat[r * (size_t)args[0].cols], sizeof(xs[0]) * n);
+		*out = vec_value_array(xs, n);
+		goto done;
+	}
+
+	if (!strcmp(name, "col") && argc == 2) {
+		if (args[0].kind != VEC_VALUE_MATRIX || args[1].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: col(A, col)");
+			goto fail;
+		}
+		size_t c;
+		if (vector_index(vec_number_float64(args[1].num), (size_t)args[0].cols, &c, err, errsz) != 0)
+			goto fail;
+		size_t n = (size_t)args[0].rows;
+		double *xs = n ? malloc(sizeof(xs[0]) * n) : NULL;
+		if (n && !xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		for (size_t r = 0; r < n; r++)
+			xs[r] = args[0].mat[r * (size_t)args[0].cols + c];
+		*out = vec_value_array(xs, n);
+		goto done;
+	}
+
+	if (!strcmp(name, "diag") && argc == 1) {
+		if (args[0].kind != VEC_VALUE_MATRIX) {
+			snprintf(err, errsz, "eval: diag(A)");
+			goto fail;
+		}
+		if (args[0].rows != args[0].cols) {
+			snprintf(err, errsz, "eval: matrix shape mismatch");
+			goto fail;
+		}
+		size_t n = (size_t)args[0].rows;
+		double *xs = n ? malloc(sizeof(xs[0]) * n) : NULL;
+		if (n && !xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		for (size_t i = 0; i < n; i++)
+			xs[i] = args[0].mat[i * n + i];
+		*out = vec_value_array(xs, n);
+		goto done;
+	}
+
+	if (!strcmp(name, "trace") && argc == 1) {
+		if (args[0].kind != VEC_VALUE_MATRIX) {
+			snprintf(err, errsz, "eval: trace(A)");
+			goto fail;
+		}
+		if (args[0].rows != args[0].cols) {
+			snprintf(err, errsz, "eval: matrix shape mismatch");
+			goto fail;
+		}
+		size_t n = (size_t)args[0].rows;
+		double s = 0;
+		for (size_t i = 0; i < n; i++)
+			s += args[0].mat[i * n + i];
+		*out = vec_value_number(vec_float(s));
+		goto done;
+	}
+
+	if (!strcmp(name, "norm") && argc == 1) {
+		if (args[0].kind != VEC_VALUE_MATRIX) {
+			snprintf(err, errsz, "eval: norm(A)");
+			goto fail;
+		}
+		size_t n = (size_t)args[0].rows * (size_t)args[0].cols;
+		double ss = 0;
+		for (size_t i = 0; i < n; i++) {
+			double x = args[0].mat[i];
+			ss += x * x;
+		}
+		*out = vec_value_number(vec_float(sqrt(ss)));
+		goto done;
+	}
+
 	/* Stats builtins. */
 	if (!strcmp(name, "cov")) {
 		if (argc != 2 || args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_ARRAY) {
@@ -2004,6 +2357,167 @@ static int vec_eval_node_impl(vec_env *e, const vec_node *n, const char *ov_name
 				snprintf(err, errsz, "eval: binary %q", n->u.binary.op);
 				goto bin_fail;
 			}
+		}
+
+		if (a.kind == VEC_VALUE_MATRIX || b.kind == VEC_VALUE_MATRIX) {
+			if (a.kind == VEC_VALUE_MATRIX && b.kind == VEC_VALUE_MATRIX) {
+				vec_mat_err mrc;
+				double *m = NULL;
+				switch (n->u.binary.op) {
+				case '+':
+					if (a.rows != b.rows || a.cols != b.cols) {
+						snprintf(err, errsz, "eval: matrix shape mismatch");
+						goto bin_fail;
+					}
+					mrc = vec_matrix_add(a.rows, a.cols, a.mat, b.mat, &m);
+					break;
+				case '-':
+					if (a.rows != b.rows || a.cols != b.cols) {
+						snprintf(err, errsz, "eval: matrix shape mismatch");
+						goto bin_fail;
+					}
+					mrc = vec_matrix_sub(a.rows, a.cols, a.mat, b.mat, &m);
+					break;
+				case '*':
+					mrc = vec_matrix_mul(a.rows, a.cols, a.mat, b.rows, b.cols, b.mat, &m);
+					break;
+				default:
+					snprintf(err, errsz, "eval: unsupported matrix operation");
+					goto bin_fail;
+				}
+				if (mrc == VEC_MAT_ERR_NOMEM) {
+					snprintf(err, errsz, "eval: out of memory");
+					goto bin_fail;
+				}
+				if (mrc == VEC_MAT_ERR_SHAPE) {
+					snprintf(err, errsz, "eval: matrix shape mismatch");
+					goto bin_fail;
+				}
+				if (mrc != VEC_MAT_OK) {
+					snprintf(err, errsz, "eval: invalid matrix");
+					goto bin_fail;
+				}
+				if (n->u.binary.op == '*')
+					*out = vec_value_matrix(a.rows, b.cols, m);
+				else
+					*out = vec_value_matrix(a.rows, a.cols, m);
+				goto bin_ok;
+			}
+			if (a.kind == VEC_VALUE_MATRIX && b.kind == VEC_VALUE_NUMBER) {
+				double bf = vec_number_float64(b.num);
+				double *m = NULL;
+				vec_mat_err mrc;
+				switch (n->u.binary.op) {
+				case '*':
+					mrc = vec_matrix_scale(a.rows, a.cols, a.mat, bf, &m);
+					break;
+				case '/':
+					if (bf == 0) {
+						snprintf(err, errsz, "eval: division by zero");
+						goto bin_fail;
+					}
+					mrc = vec_matrix_scale(a.rows, a.cols, a.mat, 1 / bf, &m);
+					break;
+				case '+':
+				case '-': {
+					size_t elem_count = (size_t)a.rows * (size_t)a.cols;
+					m = elem_count ? malloc(sizeof(m[0]) * elem_count) : NULL;
+					if (elem_count && !m) {
+						snprintf(err, errsz, "eval: out of memory");
+						goto bin_fail;
+					}
+					vec_number bn = vec_float(bf);
+					for (size_t i = 0; i < elem_count; i++) {
+						vec_number r;
+						vec_number an = vec_float(a.mat[i]);
+						if (n->u.binary.op == '+')
+							r = add_number(e, an, bn);
+						else
+							r = sub_number(e, an, bn);
+						m[i] = vec_number_float64(r);
+					}
+					*out = vec_value_matrix(a.rows, a.cols, m);
+					goto bin_ok;
+				}
+				default:
+					snprintf(err, errsz, "eval: unsupported matrix operation");
+					goto bin_fail;
+				}
+				if (mrc == VEC_MAT_ERR_NOMEM) {
+					snprintf(err, errsz, "eval: out of memory");
+					goto bin_fail;
+				}
+				if (mrc != VEC_MAT_OK) {
+					snprintf(err, errsz, "eval: invalid matrix");
+					goto bin_fail;
+				}
+				*out = vec_value_matrix(a.rows, a.cols, m);
+				goto bin_ok;
+			}
+			if (a.kind == VEC_VALUE_NUMBER && b.kind == VEC_VALUE_MATRIX) {
+				double af = vec_number_float64(a.num);
+				double *m = NULL;
+				vec_mat_err mrc;
+				switch (n->u.binary.op) {
+				case '*':
+					mrc = vec_matrix_scale(b.rows, b.cols, b.mat, af, &m);
+					break;
+				case '+':
+				case '-': {
+					size_t elem_count = (size_t)b.rows * (size_t)b.cols;
+					m = elem_count ? malloc(sizeof(m[0]) * elem_count) : NULL;
+					if (elem_count && !m) {
+						snprintf(err, errsz, "eval: out of memory");
+						goto bin_fail;
+					}
+					vec_number an = vec_float(af);
+					for (size_t i = 0; i < elem_count; i++) {
+						vec_number r;
+						vec_number bn = vec_float(b.mat[i]);
+						if (n->u.binary.op == '+')
+							r = add_number(e, an, bn);
+						else
+							r = sub_number(e, an, bn);
+						m[i] = vec_number_float64(r);
+					}
+					*out = vec_value_matrix(b.rows, b.cols, m);
+					goto bin_ok;
+				}
+				default:
+					snprintf(err, errsz, "eval: unsupported matrix operation");
+					goto bin_fail;
+				}
+				if (mrc == VEC_MAT_ERR_NOMEM) {
+					snprintf(err, errsz, "eval: out of memory");
+					goto bin_fail;
+				}
+				if (mrc != VEC_MAT_OK) {
+					snprintf(err, errsz, "eval: invalid matrix");
+					goto bin_fail;
+				}
+				*out = vec_value_matrix(b.rows, b.cols, m);
+				goto bin_ok;
+			}
+			if (a.kind == VEC_VALUE_MATRIX && b.kind == VEC_VALUE_ARRAY && n->u.binary.op == '*') {
+				double *xs = NULL;
+				vec_mat_err mrc = vec_matrix_mul_vec(a.rows, a.cols, a.mat, b.arr, b.len, &xs);
+				if (mrc == VEC_MAT_ERR_NOMEM) {
+					snprintf(err, errsz, "eval: out of memory");
+					goto bin_fail;
+				}
+				if (mrc == VEC_MAT_ERR_SHAPE) {
+					snprintf(err, errsz, "eval: matrix shape mismatch");
+					goto bin_fail;
+				}
+				if (mrc != VEC_MAT_OK) {
+					snprintf(err, errsz, "eval: invalid matrix");
+					goto bin_fail;
+				}
+				*out = vec_value_array(xs, (size_t)a.rows);
+				goto bin_ok;
+			}
+			snprintf(err, errsz, "eval: unsupported matrix operation");
+			goto bin_fail;
 		}
 
 		if (a.kind == VEC_VALUE_ARRAY || b.kind == VEC_VALUE_ARRAY) {
