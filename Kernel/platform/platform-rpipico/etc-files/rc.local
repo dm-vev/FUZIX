@@ -38,5 +38,12 @@ if [ "${PICOCALCD:-0}" -ne 0 ] && [ -x /usr/bin/picocalcd ]; then
 	/usr/bin/picocalcd --interval "${PICOCALCD_INTERVAL:-1}" --out "${PICOCALCD_OUT:-/tmp/picocalc.status}" </dev/null >/dev/null 2>&1 &
 fi
 
-exit 0
+if [ "${SWAPON_PSRAM:-0}" -ne 0 ] && [ -x /bin/swapon ]; then
+	# Use the PSRAM-backed ramdisk for swap (PicoCalc: /dev/rd1).
+	# Size is in 512-byte blocks.
+	if [ -n "${SWAP_PSRAM_BLOCKS:-}" ]; then
+		/bin/swapon /dev/rd1 "$SWAP_PSRAM_BLOCKS" </dev/null >/dev/null 2>&1
+	fi
+fi
 
+exit 0

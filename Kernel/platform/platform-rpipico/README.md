@@ -168,6 +168,18 @@ You can't turn swap off again.
 
 You probably can swap to the NAND flash, but it's a terrible idea.
 
+### Swap on PicoCalc PSRAM
+
+On PicoCalc there is onboard PSRAM exposed as `/dev/rd1`. You can use it as a
+swap device:
+
+```
+# swapon /dev/rd1 8192
+```
+
+You can also enable it automatically at boot by setting `SWAPON_PSRAM=1` and
+`SWAP_PSRAM_BLOCKS=...` in `/etc/picocalc.conf`.
+
 ## Issues
 
 There are many, the biggest of which are:
@@ -179,4 +191,3 @@ There are many, the biggest of which are:
 ## Postscript
 
 dg@cowlark.com
-
