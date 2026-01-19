@@ -9,6 +9,7 @@
 #include "picosdk.h"
 #include "config.h"
 #include "core1.h"
+#include "i2ckbd.h"
 
 #define ssize_t __ssize_t
 #define time_t __time_t
@@ -132,6 +133,9 @@ static void core1_main(void)
 {
 	tusb_init();
 
+	uint64_t next_kbd_poll_us = time_us_64();
+	uint64_t next_status_poll_us = next_kbd_poll_us;
+
 	for (;;)
 	{
 		tud_task();
@@ -164,6 +168,16 @@ static void core1_main(void)
 				console_buf_write(buf, b);
 			}
 		}
+
+		uint64_t now = time_us_64();
+		if ((int64_t)(now - next_kbd_poll_us) >= 0) {
+			next_kbd_poll_us = now + 5000;
+			picocalc_kbd_poll();
+		}
+		if ((int64_t)(now - next_status_poll_us) >= 0) {
+			next_status_poll_us = now + 250000;
+			picocalc_status_poll_once();
+		}
 	}
 }
 
@@ -171,7 +185,5 @@ void core1_init(void)
 {
 	//multicore_reset_core1();
 	critical_section_init(&critical_section);
-#if NUM_DEV_TTY_USB > 0
 	multicore_launch_core1(core1_main);
-#endif
 }
