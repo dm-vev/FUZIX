@@ -172,7 +172,7 @@ bget ../../../Applications/util/ed
 bget ../../../Applications/util/env
 bget ../../../Applications/util/false
 bget ../../../Applications/util/fdisk
-bget ../../../Applications/util/fforth
+#bget ../../../Applications/util/fforth
 bget ../../../Applications/util/fgrep
 bget ../../../Applications/util/free
 bget ../../../Applications/util/fsck
@@ -265,7 +265,7 @@ chmod 0755 ed
 chmod 0755 env
 chmod 0755 false
 chmod 0755 fdisk
-chmod 0755 fforth
+#chmod 0755 fforth
 chmod 0755 fgrep
 chmod 0755 free
 chmod 0755 fsck
@@ -408,8 +408,8 @@ bget ../../../Applications/levee/levee
 chmod 0755 levee
 
 cd /usr/man/man1
-bget ../../../Applications/levee/levee.1
-chmod 0644 levee.1
+#bget ../../../Applications/levee/levee.1
+#chmod 0644 levee.1
 
 cd /usr/lib
 bget ../../../Library/libs/liberror.txt
@@ -475,7 +475,7 @@ cd /usr/games
 #bget ../../../Applications/games/adv14a
 #bget ../../../Applications/games/adv14b
 #bget ../../../Applications/games/advint
-bget ../../../Applications/games/cowsay
+#bget ../../../Applications/games/cowsay
 #bget ../../../Applications/games/fortune
 #bget ../../../Applications/games/fortune.dat
 #bget ../../../Applications/games/hamurabi
@@ -516,7 +516,7 @@ bget ../../../Applications/games/cowsay
 #chmod 0755 adv14a
 #chmod 0755 adv14b
 #chmod 0755 advint
-chmod 0755 cowsay
+#chmod 0755 cowsay
 #chmod 0755 fortune
 #chmod 0644 fortune.dat
 #chmod 0755 hamurabi
@@ -541,14 +541,14 @@ chmod 0755 cowsay
 #chmod 0755 z8
 #chmod 0755 invaders
 
-bget ../../../Applications/cave/advent
-chmod 0755 advent
+#bget ../../../Applications/cave/advent
+#chmod 0755 advent
 
 cd /usr/games
 mkdir lib
 cd lib
-bget ../../../Applications/cave/advent.db
-chmod 0644 advent.db
+#bget ../../../Applications/cave/advent.db
+#chmod 0644 advent.db
 
 #cd /usr/lib
 #mkdir trek
