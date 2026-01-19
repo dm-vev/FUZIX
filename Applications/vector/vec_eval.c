@@ -643,6 +643,114 @@ static int value_truthy(const vec_value *v, int *out)
 	}
 }
 
+struct env_saved_var {
+	int had;
+	vec_value v;
+};
+
+static int env_save_var(vec_env *e, const char *name, struct env_saved_var *out, char *err, size_t errsz)
+{
+	if (!out) {
+		snprintf(err, errsz, "eval: bad args");
+		return -1;
+	}
+	memset(out, 0, sizeof(*out));
+	if (!e || !name) {
+		snprintf(err, errsz, "eval: bad args");
+		return -1;
+	}
+	int rc = vec_env_get_var(e, name, &out->v);
+	if (rc == 0) {
+		out->had = 1;
+		return 0;
+	}
+	if (rc == 1) {
+		out->had = 0;
+		memset(&out->v, 0, sizeof(out->v));
+		return 0;
+	}
+	snprintf(err, errsz, "eval: out of memory");
+	return -1;
+}
+
+static void env_restore_var(vec_env *e, const char *name, struct env_saved_var *sv)
+{
+	if (!e || !name || !sv)
+		return;
+	if (sv->had) {
+		(void)vec_env_set_var(e, name, sv->v);
+		memset(&sv->v, 0, sizeof(sv->v));
+	} else {
+		(void)vec_env_unset_var(e, name);
+	}
+}
+
+static int eval_float(vec_env *e, const vec_node *expr, double *out_y, char *err, size_t errsz)
+{
+	if (!out_y) {
+		snprintf(err, errsz, "eval: bad args");
+		return -1;
+	}
+	vec_value v;
+	memset(&v, 0, sizeof(v));
+	if (vec_eval_node(e, expr, &v, err, errsz) != 0) {
+		vec_value_destroy(&v);
+		return -1;
+	}
+	if (v.kind != VEC_VALUE_NUMBER) {
+		vec_value_destroy(&v);
+		snprintf(err, errsz, "eval: expected numeric expression");
+		return -1;
+	}
+	*out_y = vec_number_float64(v.num);
+	vec_value_destroy(&v);
+	return 0;
+}
+
+static int xy_append(double **data, size_t *len, size_t *cap, double x, double y, char *err, size_t errsz)
+{
+	if (!data || !len || !cap) {
+		snprintf(err, errsz, "eval: bad args");
+		return -1;
+	}
+	if (*len + 2 > *cap) {
+		size_t want = *len + 2;
+		size_t ncap = *cap ? (*cap * 2) : 256;
+		if (ncap < *cap)
+			ncap = want;
+		while (ncap < want) {
+			size_t next = ncap * 2;
+			if (next < ncap) {
+				ncap = want;
+				break;
+			}
+			ncap = next;
+		}
+		double *nd = realloc(*data, sizeof(nd[0]) * ncap);
+		if (!nd) {
+			snprintf(err, errsz, "eval: out of memory");
+			return -1;
+		}
+		*data = nd;
+		*cap = ncap;
+	}
+	(*data)[*len + 0] = x;
+	(*data)[*len + 1] = y;
+	*len += 2;
+	return 0;
+}
+
+static int xy_append_break(double **data, size_t *len, size_t *cap, char *err, size_t errsz)
+{
+	if (!data || !len || !cap) {
+		snprintf(err, errsz, "eval: bad args");
+		return -1;
+	}
+	if (*len >= 2 && isnan((*data)[*len - 2]) && isnan((*data)[*len - 1]))
+		return 0;
+	return xy_append(data, len, cap, NAN, NAN, err, errsz);
+}
+
 static vec_node *value_to_node_take(vec_value *v)
 {
 	if (!v)
@@ -1203,11 +1311,11 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 		}
 
 		/* Numeric analysis builtins. */
-		if (!strcmp(name, "newton")) {
-			if (argc < 2 || argc > 4) {
-				snprintf(err, errsz, "eval: newton(expr, x0[, tol[, maxIter]])");
-				goto fail;
-			}
+			if (!strcmp(name, "newton")) {
+				if (argc < 2 || argc > 4) {
+					snprintf(err, errsz, "eval: newton(expr, x0[, tol[, maxIter]])");
+					goto fail;
+				}
 			if (args[0].kind != VEC_VALUE_EXPR || args[1].kind != VEC_VALUE_NUMBER) {
 				snprintf(err, errsz, "eval: newton(expr, x0[, tol[, maxIter]])");
 				goto fail;
@@ -1238,17 +1346,197 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 					max_iter = (int)it;
 			}
 
-			double root;
-			if (vec_numeric_solve1_newton(e, args[0].expr, x0, tol, max_iter, &root, err, errsz) != 0)
-				goto fail;
-			*out = vec_value_number(vec_float(root));
-			goto done;
-		}
+				double root;
+				if (vec_numeric_solve1_newton(e, args[0].expr, x0, tol, max_iter, &root, err, errsz) != 0)
+					goto fail;
+				*out = vec_value_number(vec_float(root));
+				goto done;
+			}
 
-		if (!strcmp(name, "bisection")) {
-			if (argc < 3 || argc > 5) {
-				snprintf(err, errsz, "eval: bisection(expr, a, b[, tol[, maxIter]])");
+			if (!strcmp(name, "solve1")) {
+					if (argc < 2 || argc > 4) {
+						snprintf(err, errsz, "eval: solve1(expr, x0[, tol[, maxIter]])");
+						goto fail;
+					}
+				if (args[0].kind != VEC_VALUE_EXPR || args[1].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: solve1(expr, x0[, tol[, maxIter]])");
+					goto fail;
+				}
+				double x0 = vec_number_float64(args[1].num);
+				double tol = 1e-9;
+				if (argc >= 3) {
+					if (args[2].kind != VEC_VALUE_NUMBER) {
+						snprintf(err, errsz, "eval: solve1(expr, x0[, tol[, maxIter]])");
+						goto fail;
+					}
+					double v = vec_number_float64(args[2].num);
+					if (v > 0 && !isinf(v) && !isnan(v))
+						tol = v;
+				}
+				int max_iter = 32;
+				if (argc == 4) {
+					if (args[3].kind != VEC_VALUE_NUMBER) {
+						snprintf(err, errsz, "eval: solve1(expr, x0[, tol[, maxIter]])");
+						goto fail;
+					}
+					double it = vec_number_float64(args[3].num);
+					if (isnan(it) || isinf(it) || it != trunc_d(it)) {
+						snprintf(err, errsz, "eval: expected integer");
+						goto fail;
+					}
+					if (it >= 1 && it <= 512)
+						max_iter = (int)it;
+				}
+				double root;
+				if (vec_numeric_solve1_newton(e, args[0].expr, x0, tol, max_iter, &root, err, errsz) != 0)
+					goto fail;
+				*out = vec_value_number(vec_float(root));
+				goto done;
+			}
+
+			if (!strcmp(name, "solve2")) {
+				if (argc < 4 || argc > 6) {
+					snprintf(err, errsz, "eval: solve2(f, g, x0, y0[, tol[, maxIter]])");
+					goto fail;
+				}
+				if (args[0].kind != VEC_VALUE_EXPR ||
+				    args[1].kind != VEC_VALUE_EXPR ||
+				    args[2].kind != VEC_VALUE_NUMBER ||
+				    args[3].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: solve2(f, g, x0, y0[, tol[, maxIter]])");
+					goto fail;
+				}
+				double x0 = vec_number_float64(args[2].num);
+				double y0 = vec_number_float64(args[3].num);
+				double tol = 1e-9;
+				if (argc >= 5) {
+					if (args[4].kind != VEC_VALUE_NUMBER) {
+						snprintf(err, errsz, "eval: solve2(f, g, x0, y0[, tol[, maxIter]])");
+						goto fail;
+					}
+					double v = vec_number_float64(args[4].num);
+					if (v > 0 && !isinf(v) && !isnan(v))
+						tol = v;
+				}
+				int max_iter = 32;
+				if (argc == 6) {
+					if (args[5].kind != VEC_VALUE_NUMBER) {
+						snprintf(err, errsz, "eval: solve2(f, g, x0, y0[, tol[, maxIter]])");
+						goto fail;
+					}
+					double it = vec_number_float64(args[5].num);
+					if (isnan(it) || isinf(it) || it != trunc_d(it)) {
+						snprintf(err, errsz, "eval: expected integer");
+						goto fail;
+					}
+					if (it >= 1 && it <= 512)
+						max_iter = (int)it;
+				}
+
+				struct env_saved_var prev_x = {0};
+				struct env_saved_var prev_y = {0};
+				if (env_save_var(e, "x", &prev_x, err, errsz) != 0)
+					goto fail;
+				if (env_save_var(e, "y", &prev_y, err, errsz) != 0) {
+					vec_value_destroy(&prev_x.v);
+					goto fail;
+				}
+
+				double x = x0;
+				double y = y0;
+				int converged = 0;
+
+				for (int iter = 0; iter < max_iter; iter++) {
+					if (vec_env_set_var(e, "x", vec_value_number(vec_float(x))) != 0 ||
+					    vec_env_set_var(e, "y", vec_value_number(vec_float(y))) != 0) {
+						snprintf(err, errsz, "eval: out of memory");
+						goto solve2_fail;
+					}
+
+					double fv, gv;
+					if (eval_float(e, args[0].expr, &fv, err, errsz) != 0 ||
+					    eval_float(e, args[1].expr, &gv, err, errsz) != 0)
+						goto solve2_fail;
+					if (fabs(fv) <= tol && fabs(gv) <= tol) {
+						converged = 1;
+						break;
+					}
+
+					double hx = 1e-6 * (1 + fabs(x));
+					double hy = 1e-6 * (1 + fabs(y));
+
+					if (vec_env_set_var(e, "x", vec_value_number(vec_float(x + hx))) != 0 ||
+					    vec_env_set_var(e, "y", vec_value_number(vec_float(y))) != 0) {
+						snprintf(err, errsz, "eval: out of memory");
+						goto solve2_fail;
+					}
+					double fxph, gxph;
+					if (eval_float(e, args[0].expr, &fxph, err, errsz) != 0 ||
+					    eval_float(e, args[1].expr, &gxph, err, errsz) != 0)
+						goto solve2_fail;
+					double dfdx = (fxph - fv) / hx;
+					double dgdx = (gxph - gv) / hx;
+
+					if (vec_env_set_var(e, "x", vec_value_number(vec_float(x))) != 0 ||
+					    vec_env_set_var(e, "y", vec_value_number(vec_float(y + hy))) != 0) {
+						snprintf(err, errsz, "eval: out of memory");
+						goto solve2_fail;
+					}
+					double fyph, gyph;
+					if (eval_float(e, args[0].expr, &fyph, err, errsz) != 0 ||
+					    eval_float(e, args[1].expr, &gyph, err, errsz) != 0)
+						goto solve2_fail;
+					double dfdy = (fyph - fv) / hy;
+					double dgdy = (gyph - gv) / hy;
+
+					double det = dfdx * dgdy - dfdy * dgdx;
+					if (det == 0 || isnan(det) || isinf(det)) {
+						snprintf(err, errsz, "eval: solve2 singular Jacobian");
+						goto solve2_fail;
+					}
+
+					double dx = (-fv * dgdy + gv * dfdy) / det;
+					double dy = (dgdx * fv - dfdx * gv) / det;
+
+					double x_next = x + dx;
+					double y_next = y + dy;
+					if (fabs(dx) <= tol * (1 + fabs(x)) && fabs(dy) <= tol * (1 + fabs(y))) {
+						x = x_next;
+						y = y_next;
+						converged = 1;
+						break;
+					}
+					x = x_next;
+					y = y_next;
+				}
+
+				if (!converged) {
+					snprintf(err, errsz, "eval: solve2 did not converge");
+					goto solve2_fail;
+				}
+
+				double *xy = malloc(sizeof(xy[0]) * 2);
+				if (!xy) {
+					snprintf(err, errsz, "eval: out of memory");
+					goto solve2_fail;
+				}
+				xy[0] = x;
+				xy[1] = y;
+				env_restore_var(e, "y", &prev_y);
+				env_restore_var(e, "x", &prev_x);
+				*out = vec_value_array(xy, 2);
+				goto done;
+
+			solve2_fail:
+				env_restore_var(e, "y", &prev_y);
+				env_restore_var(e, "x", &prev_x);
 				goto fail;
+			}
+
+			if (!strcmp(name, "bisection")) {
+				if (argc < 3 || argc > 5) {
+					snprintf(err, errsz, "eval: bisection(expr, a, b[, tol[, maxIter]])");
+					goto fail;
 			}
 			if (args[0].kind != VEC_VALUE_EXPR ||
 			    args[1].kind != VEC_VALUE_NUMBER ||
@@ -1511,6 +1799,127 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 				goto fail;
 			*out = vec_value_array(roots, nroots);
 			goto done;
+		}
+
+		if (!strcmp(name, "region")) {
+			if (argc < 5 || argc > 6) {
+				snprintf(err, errsz, "eval: region(cond, xmin, xmax, ymin, ymax[, n])");
+				goto fail;
+			}
+			if (args[0].kind != VEC_VALUE_EXPR ||
+			    args[1].kind != VEC_VALUE_NUMBER ||
+			    args[2].kind != VEC_VALUE_NUMBER ||
+			    args[3].kind != VEC_VALUE_NUMBER ||
+			    args[4].kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: region(cond, xmin, xmax, ymin, ymax[, n])");
+				goto fail;
+			}
+			double x_min = vec_number_float64(args[1].num);
+			double x_max = vec_number_float64(args[2].num);
+			double y_min = vec_number_float64(args[3].num);
+			double y_max = vec_number_float64(args[4].num);
+			if (x_min >= x_max || y_min >= y_max) {
+				snprintf(err, errsz, "eval: region expects min < max");
+				goto fail;
+			}
+			int n = 128;
+			if (argc == 6) {
+				if (args[5].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: region(cond, xmin, xmax, ymin, ymax[, n])");
+					goto fail;
+				}
+				double nn = vec_number_float64(args[5].num);
+				if (isnan(nn) || isinf(nn) || nn != trunc_d(nn)) {
+					snprintf(err, errsz, "eval: expected integer");
+					goto fail;
+				}
+				if (nn < 8 || nn > 1024) {
+					snprintf(err, errsz, "eval: region n must be 8..1024");
+					goto fail;
+				}
+				n = (int)nn;
+			}
+
+			struct env_saved_var prev_x = {0};
+			struct env_saved_var prev_y = {0};
+			if (env_save_var(e, "x", &prev_x, err, errsz) != 0)
+				goto fail;
+			if (env_save_var(e, "y", &prev_y, err, errsz) != 0) {
+				vec_value_destroy(&prev_x.v);
+				goto fail;
+			}
+
+			double *data = NULL;
+			size_t len = 0;
+			size_t cap = 0;
+
+			for (int yi = 0; yi < n; yi++) {
+				double ty = (double)yi / (double)(n - 1);
+				double y = y_min + ty * (y_max - y_min);
+				int run = 0;
+				for (int xi = 0; xi < n; xi++) {
+					double tx = (double)xi / (double)(n - 1);
+					double x = x_min + tx * (x_max - x_min);
+
+					if (vec_env_set_var(e, "x", vec_value_number(vec_float(x))) != 0 ||
+					    vec_env_set_var(e, "y", vec_value_number(vec_float(y))) != 0) {
+						snprintf(err, errsz, "eval: out of memory");
+						goto region_fail;
+					}
+					vec_value v;
+					memset(&v, 0, sizeof(v));
+					if (vec_eval_node(e, args[0].expr, &v, err, errsz) != 0) {
+						vec_value_destroy(&v);
+						goto region_fail;
+					}
+
+					int ok;
+					if (value_truthy(&v, &ok) != 0) {
+						vec_value_destroy(&v);
+						snprintf(err, errsz, "eval: condition must be a number");
+						goto region_fail;
+					}
+					vec_value_destroy(&v);
+
+					if (ok) {
+						if (xy_append(&data, &len, &cap, x, y, err, errsz) != 0)
+							goto region_fail;
+						run = 1;
+						continue;
+					}
+					if (run) {
+						if (xy_append_break(&data, &len, &cap, err, errsz) != 0)
+							goto region_fail;
+						run = 0;
+					}
+				}
+				if (xy_append_break(&data, &len, &cap, err, errsz) != 0)
+					goto region_fail;
+			}
+
+			env_restore_var(e, "y", &prev_y);
+			env_restore_var(e, "x", &prev_x);
+
+			int rows = (int)(len / 2);
+			if (rows == 0) {
+				free(data);
+				data = malloc(sizeof(data[0]) * 2);
+				if (!data) {
+					snprintf(err, errsz, "eval: out of memory");
+					goto fail;
+				}
+				data[0] = NAN;
+				data[1] = NAN;
+				rows = 1;
+			}
+			*out = vec_value_matrix(rows, 2, data);
+			goto done;
+
+		region_fail:
+			free(data);
+			env_restore_var(e, "y", &prev_y);
+			env_restore_var(e, "x", &prev_x);
+			goto fail;
 		}
 
 		/* Polynomial builtins. */
