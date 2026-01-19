@@ -9,10 +9,10 @@ SUBTARGET=pico # set default subtarget
 endif
 
 ifeq ($(SUBTARGET),pico)
-TOTALMEM=160
+TOTALMEM=140
 endif
 ifeq ($(SUBTARGET),pico_w)
-TOTALMEM=160
+TOTALMEM=140
 endif
 ifeq ($(SUBTARGET),pico2)
 TOTALMEM=320
