@@ -171,6 +171,12 @@ extern uint8_t progbase[USERMEM];
 #define DEV_USB_DETECT_TIMEOUT 5000 /* (ms) Total timeout time to detect USB host connection*/
 #define DEV_USB_INIT_TIMEOUT 2000 /* (ms) Total timeout to try not swallow messages */
 
+/* PicoCalc I2C polling (core1) */
+#define PICOCALC_KBD_POLL_US 5000
+#define PICOCALC_STATUS_POLL_US 250000
+#define PICOCALC_I2C_BACKOFF_MIN_US 5000
+#define PICOCALC_I2C_BACKOFF_MAX_US 500000
+
 #define TTYDEV   BOOT_TTY /* Device used by kernel for messages, panics */
 #define NBUFS    20       /* Number of block buffers */
 #define NMOUNTS	 4	  /* Number of mounts at a time */

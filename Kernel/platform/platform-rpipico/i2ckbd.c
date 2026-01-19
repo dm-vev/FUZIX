@@ -48,8 +48,35 @@ static struct picocalc_status status_cache = {
     .reserved = { 0 },
 };
 
+static struct picocalc_i2c_stats i2c_stats;
+static uint32_t i2c_backoff = PICOCALC_I2C_BACKOFF_MIN_US;
+
 static uint8_t status_phase;
 static int ctrlheld;
+
+static uint32_t now_ms(void)
+{
+    return (uint32_t)(time_us_64() / 1000u);
+}
+
+static void i2c_record_ok(void)
+{
+    i2c_backoff = PICOCALC_I2C_BACKOFF_MIN_US;
+    i2c_stats.backoff_us = i2c_backoff;
+    i2c_stats.last_ok_ms = now_ms();
+}
+
+static void i2c_record_error(void)
+{
+    uint32_t next = i2c_backoff * 2u;
+    if (next < PICOCALC_I2C_BACKOFF_MIN_US)
+        next = PICOCALC_I2C_BACKOFF_MIN_US;
+    if (next > PICOCALC_I2C_BACKOFF_MAX_US)
+        next = PICOCALC_I2C_BACKOFF_MAX_US;
+    i2c_backoff = next;
+    i2c_stats.backoff_us = i2c_backoff;
+    i2c_stats.last_err_ms = now_ms();
+}
 
 void init_i2c_kbd(){
     gpio_set_function(I2C_KBD_SCL, GPIO_FUNC_I2C);
@@ -64,6 +91,9 @@ void init_i2c_kbd(){
     kbd_tail = 0;
     status_phase = 0;
     ctrlheld = 0;
+    memset(&i2c_stats, 0, sizeof(i2c_stats));
+    i2c_backoff = PICOCALC_I2C_BACKOFF_MIN_US;
+    i2c_stats.backoff_us = i2c_backoff;
     i2c_inited = 1;
 }
 
@@ -74,16 +104,27 @@ static int i2c_kbd_read_fifo(uint16_t *out)
     uint8_t resp[2] = {0};
 
     uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
+    i2c_stats.fifo_reads++;
     retval = i2c_write_timeout_us(I2C_KBD_MOD, I2C_KBD_ADDR, &reg, 1, false, I2C_KBD_TIMEOUT_US);
     if (retval != 1) {
+        i2c_stats.fifo_errors++;
+        i2c_record_error();
         spin_unlock(i2c_kbd_lock, spin);
         return -1;
     }
     retval = i2c_read_timeout_us(I2C_KBD_MOD, I2C_KBD_ADDR, resp, sizeof(resp), false, I2C_KBD_TIMEOUT_US);
     spin_unlock(i2c_kbd_lock, spin);
-    if (retval != (int)sizeof(resp))
+    if (retval != (int)sizeof(resp)) {
+        uint32_t spin2 = spin_lock_blocking(i2c_kbd_lock);
+        i2c_stats.fifo_errors++;
+        i2c_record_error();
+        spin_unlock(i2c_kbd_lock, spin2);
         return -1;
+    }
     *out = (uint16_t)resp[0] | ((uint16_t)resp[1] << 8);
+    uint32_t spin3 = spin_lock_blocking(i2c_kbd_lock);
+    i2c_record_ok();
+    spin_unlock(i2c_kbd_lock, spin3);
     return 0;
 }
 
@@ -93,18 +134,29 @@ static int i2c_kbd_read_reg_u8(uint8_t reg, uint8_t *out)
     uint8_t resp[2] = {0};
 
     uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
+    i2c_stats.reg_reads++;
     retval = i2c_write_timeout_us(I2C_KBD_MOD, I2C_KBD_ADDR, &reg, 1, false, I2C_KBD_TIMEOUT_US);
     if (retval != 1) {
+        i2c_stats.reg_errors++;
+        i2c_record_error();
         spin_unlock(i2c_kbd_lock, spin);
         return -1;
     }
     retval = i2c_read_timeout_us(I2C_KBD_MOD, I2C_KBD_ADDR, resp, sizeof(resp), false, I2C_KBD_TIMEOUT_US);
     spin_unlock(i2c_kbd_lock, spin);
-    if (retval != (int)sizeof(resp))
+    if (retval != (int)sizeof(resp)) {
+        uint32_t spin2 = spin_lock_blocking(i2c_kbd_lock);
+        i2c_stats.reg_errors++;
+        i2c_record_error();
+        spin_unlock(i2c_kbd_lock, spin2);
         return -1;
+    }
     if (resp[0] != reg)
         return -1;
     *out = resp[1];
+    uint32_t spin3 = spin_lock_blocking(i2c_kbd_lock);
+    i2c_record_ok();
+    spin_unlock(i2c_kbd_lock, spin3);
     return 0;
 }
 
@@ -233,10 +285,39 @@ int I2C_Send_RegData(int i2caddr,int reg,char command){
     uint8_t I2C_Sendlen=2;
 
     uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
+    i2c_stats.writes++;
     retval=i2c_write_timeout_us(I2C_KBD_MOD, (uint8_t)i2caddr, (uint8_t *)I2C_Send_Buffer, I2C_Sendlen,false, I2C_KBD_TIMEOUT_US);
+    if (retval != I2C_Sendlen) {
+        i2c_stats.write_errors++;
+        i2c_record_error();
+    } else {
+        i2c_record_ok();
+    }
     spin_unlock(i2c_kbd_lock, spin);
 
     if (retval != I2C_Sendlen)
         return -1;
     return 0;
+}
+
+uint32_t picocalc_i2c_backoff_us(void)
+{
+    if (!i2c_inited || i2c_kbd_lock == NULL)
+        return PICOCALC_I2C_BACKOFF_MAX_US;
+    uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
+    uint32_t v = i2c_backoff;
+    spin_unlock(i2c_kbd_lock, spin);
+    return v;
+}
+
+void picocalc_i2c_stats_snapshot(struct picocalc_i2c_stats *out)
+{
+    if (!i2c_inited || i2c_kbd_lock == NULL) {
+        memset(out, 0, sizeof(*out));
+        out->backoff_us = PICOCALC_I2C_BACKOFF_MAX_US;
+        return;
+    }
+    uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
+    *out = i2c_stats;
+    spin_unlock(i2c_kbd_lock, spin);
 }

@@ -22,5 +22,8 @@ void picocalc_status_snapshot(struct picocalc_status *out);
 int picocalc_set_lcd_backlight(uint8_t level);
 void picocalc_status_poll_once(void);
 void picocalc_kbd_poll(void);
+struct picocalc_i2c_stats;
+void picocalc_i2c_stats_snapshot(struct picocalc_i2c_stats *out);
+uint32_t picocalc_i2c_backoff_us(void);
 
 #endif
