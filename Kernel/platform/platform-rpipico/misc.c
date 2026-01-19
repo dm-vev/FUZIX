@@ -78,6 +78,69 @@ int plt_dev_ioctl(uarg_t request, char *data)
             return -1;
         return 0;
     }
+    case PICOIOC_GET_POLL_CONFIG: {
+        struct picocalc_poll_config cfg;
+        if (!valaddr_w((unsigned char *)data, sizeof(cfg)))
+            return -1;
+        picocalc_poll_config_snapshot(&cfg);
+        if (uput(&cfg, data, sizeof(cfg)))
+            return -1;
+        return 0;
+    }
+    case PICOIOC_SET_POLL_CONFIG: {
+        struct picocalc_poll_config cfg;
+        if (!valaddr_r((unsigned char *)data, sizeof(cfg)))
+            return -1;
+        if (uget(data, &cfg, sizeof(cfg)))
+            return -1;
+        if (picocalc_poll_config_set(&cfg) < 0) {
+            udata.u_error = EINVAL;
+            return -1;
+        }
+        return 0;
+    }
+    case PICOIOC_SET_KBD_BACKLIGHT: {
+        uint8_t pct;
+        if (!valaddr_r((unsigned char *)data, sizeof(pct)))
+            return -1;
+        if (uget(data, &pct, sizeof(pct)))
+            return -1;
+        if (pct > 100) {
+            udata.u_error = EINVAL;
+            return -1;
+        }
+        uint16_t level = (uint16_t)pct * 255;
+        level /= 100;
+        if (picocalc_set_kbd_backlight((uint8_t)level) < 0) {
+            udata.u_error = EIO;
+            return -1;
+        }
+        return 0;
+    }
+    case PICOIOC_POWEROFF: {
+        uint8_t secs;
+        if (!valaddr_r((unsigned char *)data, sizeof(secs)))
+            return -1;
+        if (uget(data, &secs, sizeof(secs)))
+            return -1;
+        if (picocalc_poweroff(secs) < 0) {
+            udata.u_error = EIO;
+            return -1;
+        }
+        return 0;
+    }
+    case PICOIOC_RESET_KBD: {
+        uint8_t secs;
+        if (!valaddr_r((unsigned char *)data, sizeof(secs)))
+            return -1;
+        if (uget(data, &secs, sizeof(secs)))
+            return -1;
+        if (picocalc_reset_kbd(secs) < 0) {
+            udata.u_error = EIO;
+            return -1;
+        }
+        return 0;
+    }
     default:
         udata.u_error = EINVAL;
         return -1;
