@@ -12,6 +12,7 @@ SRCS = \
 	vec_lexer.c \
 	vec_number.c \
 	vec_parser.c \
+	vec_plot.c \
 	vec_value.c \
 	vector.c
 OBJS = $(SRCS:.c=.o)
