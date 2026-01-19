@@ -19,7 +19,9 @@ int vec_numeric_integrate_trapezoid(vec_env *e, const vec_node *expr, double a, 
 int vec_numeric_integrate_simpson(vec_env *e, const vec_node *expr, double a, double b, int n,
 				  double *out, char *err, size_t errsz);
 
+int vec_numeric_roots_scan_bisection(vec_env *e, const vec_node *expr, double x_min, double x_max, int n,
+				     double **out_roots, size_t *out_len, char *err, size_t errsz);
+
 int vec_numeric_interp1(const vec_value *data, double x, double *out_y, char *err, size_t errsz);
 
 #endif
-
