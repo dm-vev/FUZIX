@@ -38,6 +38,14 @@ arg_t _lseek(void)
 	if ((ino = getinode(file)) == NULLINODE)
 		return (-1);
 
+#ifdef CONFIG_AUDIO_PCM
+	/* /dev/audio uses the open file table pointer as an internal handle. */
+	if (isdevice(ino) && (uint16_t)ino->c_node.i_addr[0] == DEV_AUDIO) {
+		udata.u_error = ESPIPE;
+		return (-1);
+	}
+#endif
+
 	if (getmode(ino) == MODE_R(F_PIPE)) {
 		udata.u_error = ESPIPE;
 		return (-1);

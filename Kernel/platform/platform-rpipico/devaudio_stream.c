@@ -204,13 +204,12 @@ int audmux_close(uint_fast8_t minor)
 {
 	irqflags_t irq;
 	uint16_t token = (uint16_t)udata.u_offset;
-	uint16_t pid = udata.u_ptab->p_pid;
 	uint8_t stream;
 
 	used(minor);
 	irq = di();
 	if (token == 0) {
-		if (mixer_open && mixer_pid == pid) {
+		if (mixer_open) {
 			mixer_open = 0;
 			mixer_pid = 0;
 			evtq_reset();
@@ -220,7 +219,7 @@ int audmux_close(uint_fast8_t minor)
 		return 0;
 	}
 	stream = (uint8_t)(token - 1);
-	if (stream < MAX_AUDIO_STREAMS && streams[stream].inuse && streams[stream].pid == pid) {
+	if (stream < MAX_AUDIO_STREAMS && streams[stream].inuse) {
 		streams[stream].inuse = 0;
 		streams[stream].pid = 0;
 		streams[stream].head = 0;
@@ -237,7 +236,6 @@ int audmux_close(uint_fast8_t minor)
 int audmux_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
 	uint16_t token = (uint16_t)udata.u_offset;
-	uint16_t pid = udata.u_ptab->p_pid;
 	uint8_t stream;
 	uint16_t written = 0;
 	uint8_t scratch[64];
@@ -255,7 +253,7 @@ int audmux_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 	}
 
 	stream = (uint8_t)(token - 1);
-	if (stream >= MAX_AUDIO_STREAMS || !streams[stream].inuse || streams[stream].pid != pid) {
+	if (stream >= MAX_AUDIO_STREAMS || !streams[stream].inuse) {
 		udata.u_error = EBADF;
 		return -1;
 	}
@@ -291,7 +289,7 @@ int audmux_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 			return -1;
 
 		irq = di();
-		if (!s->inuse || s->pid != pid) {
+		if (!s->inuse) {
 			irqrestore(irq);
 			udata.u_error = EBADF;
 			return -1;
