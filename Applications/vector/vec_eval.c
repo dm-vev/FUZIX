@@ -751,6 +751,331 @@ static int xy_append_break(double **data, size_t *len, size_t *cap, char *err, s
 	return xy_append(data, len, cap, NAN, NAN, err, errsz);
 }
 
+static int xy_append_segment(double **data, size_t *len, size_t *cap,
+			     double x0, double y0, double x1, double y1, char *err, size_t errsz)
+{
+	if (xy_append(data, len, cap, x0, y0, err, errsz) != 0)
+		return -1;
+	if (xy_append(data, len, cap, x1, y1, err, errsz) != 0)
+		return -1;
+	if (xy_append_break(data, len, cap, err, errsz) != 0)
+		return -1;
+	return 0;
+}
+
+static int plot_vectorfield_segments(vec_env *e, const vec_node *fx, const vec_node *fy,
+				     double xmin, double xmax, double ymin, double ymax, int n,
+				     double **out_data, int *out_rows, char *err, size_t errsz)
+{
+	if (!out_data || !out_rows) {
+		snprintf(err, errsz, "eval: bad args");
+		return -1;
+	}
+	*out_data = NULL;
+	*out_rows = 0;
+	if (!e || !fx || !fy) {
+		snprintf(err, errsz, "eval: bad args");
+		return -1;
+	}
+
+	struct env_saved_var prev_x = {0};
+	struct env_saved_var prev_y = {0};
+	if (env_save_var(e, "x", &prev_x, err, errsz) != 0)
+		return -1;
+	if (env_save_var(e, "y", &prev_y, err, errsz) != 0) {
+		vec_value_destroy(&prev_x.v);
+		return -1;
+	}
+
+	if (xmin >= xmax || ymin >= ymax) {
+		env_restore_var(e, "y", &prev_y);
+		env_restore_var(e, "x", &prev_x);
+		snprintf(err, errsz, "eval: vectorfield expects min < max");
+		return -1;
+	}
+	if (n < 2)
+		n = 2;
+
+	double dx = (xmax - xmin) / (double)(n - 1);
+	double dy = (ymax - ymin) / (double)(n - 1);
+	double scale = 0.35 * (dx < dy ? dx : dy);
+
+	double *data = NULL;
+	size_t len = 0;
+	size_t cap = 0;
+
+	for (int j = 0; j < n; j++) {
+		double y = ymin + (double)j * dy;
+		for (int i = 0; i < n; i++) {
+			double x = xmin + (double)i * dx;
+			if (vec_env_set_var(e, "x", vec_value_number(vec_float(x))) != 0 ||
+			    vec_env_set_var(e, "y", vec_value_number(vec_float(y))) != 0) {
+				snprintf(err, errsz, "eval: out of memory");
+				goto fail;
+			}
+			double vx, vy;
+			if (eval_float(e, fx, &vx, err, errsz) != 0 ||
+			    eval_float(e, fy, &vy, err, errsz) != 0)
+				goto fail;
+			if (isnan(vx) || isnan(vy) || isinf(vx) || isinf(vy))
+				continue;
+			double mag = hypot(vx, vy);
+			if (mag == 0 || isnan(mag) || isinf(mag))
+				continue;
+			double ux = vx / mag;
+			double uy = vy / mag;
+			double x1 = x + ux * scale;
+			double y1 = y + uy * scale;
+			if (xy_append(&data, &len, &cap, x, y, err, errsz) != 0 ||
+			    xy_append(&data, &len, &cap, x1, y1, err, errsz) != 0 ||
+			    xy_append_break(&data, &len, &cap, err, errsz) != 0)
+				goto fail;
+		}
+	}
+
+	env_restore_var(e, "y", &prev_y);
+	env_restore_var(e, "x", &prev_x);
+	int rows = (int)(len / 2);
+	if (rows == 0) {
+		free(data);
+		data = malloc(sizeof(data[0]) * 2);
+		if (!data) {
+			snprintf(err, errsz, "eval: out of memory");
+			return -1;
+		}
+		data[0] = NAN;
+		data[1] = NAN;
+		rows = 1;
+	}
+	*out_data = data;
+	*out_rows = rows;
+	return 0;
+
+fail:
+	free(data);
+	env_restore_var(e, "y", &prev_y);
+	env_restore_var(e, "x", &prev_x);
+	return -1;
+}
+
+static int ms_interp(double x0, double y0, double z0, double x1, double y1, double z1,
+		     double level, double *out_x, double *out_y)
+{
+	if (!out_x || !out_y)
+		return 0;
+	if (isnan(z0) || isnan(z1) || isinf(z0) || isinf(z1))
+		return 0;
+	double dz = z1 - z0;
+	double t = 0.5;
+	if (dz != 0)
+		t = (level - z0) / dz;
+	if (t < 0)
+		t = 0;
+	else if (t > 1)
+		t = 1;
+	*out_x = x0 + t * (x1 - x0);
+	*out_y = y0 + t * (y1 - y0);
+	return 1;
+}
+
+static int plot_contour_marching_squares(vec_env *e, const vec_node *f, const double *levels, size_t nlevels,
+					double xmin, double xmax, double ymin, double ymax, int n,
+					double **out_data, int *out_rows, char *err, size_t errsz)
+{
+	if (!out_data || !out_rows) {
+		snprintf(err, errsz, "eval: bad args");
+		return -1;
+	}
+	*out_data = NULL;
+	*out_rows = 0;
+	if (!e || !f || !levels || nlevels == 0) {
+		snprintf(err, errsz, "eval: bad args");
+		return -1;
+	}
+
+	struct env_saved_var prev_x = {0};
+	struct env_saved_var prev_y = {0};
+	if (env_save_var(e, "x", &prev_x, err, errsz) != 0)
+		return -1;
+	if (env_save_var(e, "y", &prev_y, err, errsz) != 0) {
+		vec_value_destroy(&prev_x.v);
+		return -1;
+	}
+
+	if (xmin >= xmax || ymin >= ymax) {
+		env_restore_var(e, "y", &prev_y);
+		env_restore_var(e, "x", &prev_x);
+		snprintf(err, errsz, "eval: contour expects min < max");
+		return -1;
+	}
+	if (n < 8)
+		n = 8;
+
+	double *xs = malloc(sizeof(xs[0]) * (size_t)n);
+	double *ys = malloc(sizeof(ys[0]) * (size_t)n);
+	double *val = malloc(sizeof(val[0]) * (size_t)n * (size_t)n);
+	if (!xs || !ys || !val) {
+		free(xs);
+		free(ys);
+		free(val);
+		env_restore_var(e, "y", &prev_y);
+		env_restore_var(e, "x", &prev_x);
+		snprintf(err, errsz, "eval: out of memory");
+		return -1;
+	}
+
+	for (int i = 0; i < n; i++) {
+		double t = (double)i / (double)(n - 1);
+		xs[i] = xmin + t * (xmax - xmin);
+		ys[i] = ymin + t * (ymax - ymin);
+	}
+	for (int j = 0; j < n; j++) {
+		for (int i = 0; i < n; i++) {
+			if (vec_env_set_var(e, "x", vec_value_number(vec_float(xs[i]))) != 0 ||
+			    vec_env_set_var(e, "y", vec_value_number(vec_float(ys[j]))) != 0) {
+				snprintf(err, errsz, "eval: out of memory");
+				goto fail;
+			}
+			double v;
+			if (eval_float(e, f, &v, err, errsz) != 0)
+				goto fail;
+			val[(size_t)j * (size_t)n + (size_t)i] = v;
+		}
+	}
+
+	double *data = NULL;
+	size_t len = 0;
+	size_t cap = 0;
+
+	for (size_t li = 0; li < nlevels; li++) {
+		double level = levels[li];
+		for (int j = 0; j < n - 1; j++) {
+			double y0 = ys[j];
+			double y1 = ys[j + 1];
+			for (int i = 0; i < n - 1; i++) {
+				double x0 = xs[i];
+				double x1 = xs[i + 1];
+				double z00 = val[(size_t)j * (size_t)n + (size_t)i];
+				double z10 = val[(size_t)j * (size_t)n + (size_t)i + 1];
+				double z01 = val[(size_t)(j + 1) * (size_t)n + (size_t)i];
+				double z11 = val[(size_t)(j + 1) * (size_t)n + (size_t)i + 1];
+
+				int c0 = z00 > level;
+				int c1 = z10 > level;
+				int c2 = z11 > level;
+				int c3 = z01 > level;
+				int idx = 0;
+					if (c0)
+						idx |= 1;
+					if (c1)
+						idx |= 2;
+					if (c2)
+						idx |= 4;
+					if (c3)
+						idx |= 8;
+					if (idx == 0 || idx == 15)
+						continue;
+
+					double ex[4];
+					double ey[4];
+					int ok[4];
+					ok[0] = ms_interp(x0, y0, z00, x1, y0, z10, level, &ex[0], &ey[0]);
+					ok[1] = ms_interp(x1, y0, z10, x1, y1, z11, level, &ex[1], &ey[1]);
+					ok[2] = ms_interp(x0, y1, z01, x1, y1, z11, level, &ex[2], &ey[2]);
+					ok[3] = ms_interp(x0, y0, z00, x0, y1, z01, level, &ex[3], &ey[3]);
+
+					switch (idx) {
+					case 1:
+					case 14:
+						if (ok[3] && ok[0] &&
+						    xy_append_segment(&data, &len, &cap, ex[3], ey[3], ex[0], ey[0], err, errsz) != 0)
+							goto fail;
+						break;
+					case 2:
+					case 13:
+						if (ok[0] && ok[1] &&
+						    xy_append_segment(&data, &len, &cap, ex[0], ey[0], ex[1], ey[1], err, errsz) != 0)
+							goto fail;
+						break;
+					case 3:
+					case 12:
+						if (ok[3] && ok[1] &&
+						    xy_append_segment(&data, &len, &cap, ex[3], ey[3], ex[1], ey[1], err, errsz) != 0)
+							goto fail;
+						break;
+					case 4:
+					case 11:
+						if (ok[1] && ok[2] &&
+						    xy_append_segment(&data, &len, &cap, ex[1], ey[1], ex[2], ey[2], err, errsz) != 0)
+							goto fail;
+						break;
+					case 5:
+						if (ok[3] && ok[2] &&
+						    xy_append_segment(&data, &len, &cap, ex[3], ey[3], ex[2], ey[2], err, errsz) != 0)
+							goto fail;
+						if (ok[0] && ok[1] &&
+						    xy_append_segment(&data, &len, &cap, ex[0], ey[0], ex[1], ey[1], err, errsz) != 0)
+							goto fail;
+						break;
+					case 6:
+					case 9:
+						if (ok[0] && ok[2] &&
+						    xy_append_segment(&data, &len, &cap, ex[0], ey[0], ex[2], ey[2], err, errsz) != 0)
+							goto fail;
+						break;
+					case 7:
+					case 8:
+						if (ok[3] && ok[2] &&
+						    xy_append_segment(&data, &len, &cap, ex[3], ey[3], ex[2], ey[2], err, errsz) != 0)
+							goto fail;
+						break;
+					case 10:
+						if (ok[3] && ok[0] &&
+						    xy_append_segment(&data, &len, &cap, ex[3], ey[3], ex[0], ey[0], err, errsz) != 0)
+							goto fail;
+						if (ok[1] && ok[2] &&
+						    xy_append_segment(&data, &len, &cap, ex[1], ey[1], ex[2], ey[2], err, errsz) != 0)
+							goto fail;
+						break;
+					default:
+						break;
+					}
+				}
+			}
+		}
+
+	free(xs);
+	free(ys);
+	free(val);
+	env_restore_var(e, "y", &prev_y);
+	env_restore_var(e, "x", &prev_x);
+
+	int rows = (int)(len / 2);
+	if (rows == 0) {
+		free(data);
+		data = malloc(sizeof(data[0]) * 2);
+		if (!data) {
+			snprintf(err, errsz, "eval: out of memory");
+			return -1;
+		}
+		data[0] = NAN;
+		data[1] = NAN;
+		rows = 1;
+	}
+	*out_data = data;
+	*out_rows = rows;
+	return 0;
+
+fail:
+	free(xs);
+	free(ys);
+	free(val);
+	free(data);
+	env_restore_var(e, "y", &prev_y);
+	env_restore_var(e, "x", &prev_x);
+	return -1;
+}
+
 static vec_node *value_to_node_take(vec_value *v)
 {
 	if (!v)
@@ -807,6 +1132,109 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 		}
 		*out = vec_value_expr(simp);
 		return 0;
+	}
+	if (!strcmp(name, "param") && (argc == 4 || argc == 5)) {
+		const vec_node *xexpr = n->u.call.args[0];
+		const vec_node *yexpr = n->u.call.args[1];
+
+		vec_value tminv;
+		memset(&tminv, 0, sizeof(tminv));
+		if (vec_eval_node_impl(e, n->u.call.args[2], ov_name, ov_value, &tminv, err, errsz) != 0)
+			return -1;
+		vec_value tmaxv;
+		memset(&tmaxv, 0, sizeof(tmaxv));
+		if (vec_eval_node_impl(e, n->u.call.args[3], ov_name, ov_value, &tmaxv, err, errsz) != 0) {
+			vec_value_destroy(&tminv);
+			return -1;
+		}
+		if (tminv.kind != VEC_VALUE_NUMBER || tmaxv.kind != VEC_VALUE_NUMBER) {
+			vec_value_destroy(&tminv);
+			vec_value_destroy(&tmaxv);
+			snprintf(err, errsz, "eval: param expects numeric t bounds");
+			return -1;
+		}
+		double t_min = vec_number_float64(tminv.num);
+		double t_max = vec_number_float64(tmaxv.num);
+		vec_value_destroy(&tminv);
+		vec_value_destroy(&tmaxv);
+		if (isnan(t_min) || isnan(t_max) || isinf(t_min) || isinf(t_max)) {
+			snprintf(err, errsz, "eval: param invalid t bounds");
+			return -1;
+		}
+
+		int npoints = 256;
+		if (argc == 5) {
+			vec_value nv;
+			memset(&nv, 0, sizeof(nv));
+			if (vec_eval_node_impl(e, n->u.call.args[4], ov_name, ov_value, &nv, err, errsz) != 0)
+				return -1;
+			if (nv.kind != VEC_VALUE_NUMBER) {
+				vec_value_destroy(&nv);
+				snprintf(err, errsz, "eval: param expects numeric point count");
+				return -1;
+			}
+			double nf = vec_number_float64(nv.num);
+			vec_value_destroy(&nv);
+			if (nf < 2 || nf > 4096) {
+				snprintf(err, errsz, "eval: param point count must be 2..4096");
+				return -1;
+			}
+			npoints = (int)nf;
+		}
+
+		struct env_saved_var prev_t = {0};
+		if (env_save_var(e, "t", &prev_t, err, errsz) != 0)
+			return -1;
+
+		double *data = NULL;
+		if (npoints > 0) {
+			size_t want = (size_t)npoints * 2;
+			data = malloc(sizeof(data[0]) * want);
+			if (!data) {
+				env_restore_var(e, "t", &prev_t);
+				snprintf(err, errsz, "eval: out of memory");
+				return -1;
+			}
+		}
+
+		for (int i = 0; i < npoints; i++) {
+			double tt = t_min + (double)i * (t_max - t_min) / (double)(npoints - 1);
+			if (vec_env_set_var(e, "t", vec_value_number(vec_float(tt))) != 0) {
+				snprintf(err, errsz, "eval: out of memory");
+				goto param_fail;
+			}
+			vec_value xv;
+			memset(&xv, 0, sizeof(xv));
+			if (vec_eval_node_impl(e, xexpr, ov_name, ov_value, &xv, err, errsz) != 0) {
+				vec_value_destroy(&xv);
+				goto param_fail;
+			}
+			vec_value yv;
+			memset(&yv, 0, sizeof(yv));
+			if (vec_eval_node_impl(e, yexpr, ov_name, ov_value, &yv, err, errsz) != 0) {
+				vec_value_destroy(&xv);
+				goto param_fail;
+			}
+			if (xv.kind != VEC_VALUE_NUMBER || yv.kind != VEC_VALUE_NUMBER) {
+				vec_value_destroy(&xv);
+				vec_value_destroy(&yv);
+				snprintf(err, errsz, "eval: param expects x(t), y(t) to be numeric");
+				goto param_fail;
+			}
+			data[i * 2 + 0] = vec_number_float64(xv.num);
+			data[i * 2 + 1] = vec_number_float64(yv.num);
+			vec_value_destroy(&xv);
+			vec_value_destroy(&yv);
+		}
+
+		env_restore_var(e, "t", &prev_t);
+		*out = vec_value_matrix(npoints, 2, data);
+		return 0;
+
+	param_fail:
+		free(data);
+		env_restore_var(e, "t", &prev_t);
+		return -1;
 	}
 	if (!strcmp(name, "expand") && argc == 1) {
 		vec_node *ex = vec_node_expand(n->u.call.args[0]);
@@ -1922,11 +2350,220 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 			goto fail;
 		}
 
-		/* Polynomial builtins. */
-		if (!strcmp(name, "polyval")) {
-			if (argc != 2 || args[0].kind != VEC_VALUE_ARRAY) {
-				snprintf(err, errsz, "eval: polyval(coeffs, x)");
+		/* Plot builtins. */
+		if (!strcmp(name, "implicit")) {
+			if (argc < 5 || argc > 6) {
+				snprintf(err, errsz, "eval: implicit(expr, xmin, xmax, ymin, ymax[, n])");
 				goto fail;
+			}
+			if (args[0].kind != VEC_VALUE_EXPR ||
+			    args[1].kind != VEC_VALUE_NUMBER ||
+			    args[2].kind != VEC_VALUE_NUMBER ||
+			    args[3].kind != VEC_VALUE_NUMBER ||
+			    args[4].kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: implicit(expr, xmin, xmax, ymin, ymax[, n])");
+				goto fail;
+			}
+			double xmin = vec_number_float64(args[1].num);
+			double xmax = vec_number_float64(args[2].num);
+			double ymin = vec_number_float64(args[3].num);
+			double ymax = vec_number_float64(args[4].num);
+			int n = 96;
+			if (argc == 6) {
+				if (args[5].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: implicit n must be 8..512");
+					goto fail;
+				}
+				double nn = vec_number_float64(args[5].num);
+				if (isnan(nn) || isinf(nn) || nn != trunc_d(nn) || nn < 8 || nn > 512) {
+					snprintf(err, errsz, "eval: implicit n must be 8..512");
+					goto fail;
+				}
+				n = (int)nn;
+			}
+
+			double level0 = 0;
+			double *data = NULL;
+			int rows = 0;
+			if (plot_contour_marching_squares(e, args[0].expr, &level0, 1, xmin, xmax, ymin, ymax, n,
+							 &data, &rows, err, errsz) != 0)
+				goto fail;
+			*out = vec_value_matrix(rows, 2, data);
+			goto done;
+		}
+
+		if (!strcmp(name, "contour")) {
+			if (argc < 6 || argc > 7) {
+				snprintf(err, errsz, "eval: contour(expr, levels, xmin, xmax, ymin, ymax[, n])");
+				goto fail;
+			}
+			if (args[0].kind != VEC_VALUE_EXPR ||
+			    args[2].kind != VEC_VALUE_NUMBER ||
+			    args[3].kind != VEC_VALUE_NUMBER ||
+			    args[4].kind != VEC_VALUE_NUMBER ||
+			    args[5].kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: contour(expr, levels, xmin, xmax, ymin, ymax[, n])");
+				goto fail;
+			}
+			const double *levels = NULL;
+			size_t nlevels = 0;
+			double single = 0;
+			if (args[1].kind == VEC_VALUE_NUMBER) {
+				single = vec_number_float64(args[1].num);
+				levels = &single;
+				nlevels = 1;
+			} else if (args[1].kind == VEC_VALUE_ARRAY) {
+				if (args[1].len == 0) {
+					snprintf(err, errsz, "eval: contour: empty levels");
+					goto fail;
+				}
+				levels = args[1].arr;
+				nlevels = args[1].len;
+			} else {
+				snprintf(err, errsz, "eval: contour: expected number or array");
+				goto fail;
+			}
+
+			double xmin = vec_number_float64(args[2].num);
+			double xmax = vec_number_float64(args[3].num);
+			double ymin = vec_number_float64(args[4].num);
+			double ymax = vec_number_float64(args[5].num);
+			int n = 96;
+			if (argc == 7) {
+				if (args[6].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: contour n must be 8..512");
+					goto fail;
+				}
+				double nn = vec_number_float64(args[6].num);
+				if (isnan(nn) || isinf(nn) || nn != trunc_d(nn) || nn < 8 || nn > 512) {
+					snprintf(err, errsz, "eval: contour n must be 8..512");
+					goto fail;
+				}
+				n = (int)nn;
+			}
+
+			double *data = NULL;
+			int rows = 0;
+			if (plot_contour_marching_squares(e, args[0].expr, levels, nlevels, xmin, xmax, ymin, ymax, n,
+							 &data, &rows, err, errsz) != 0)
+				goto fail;
+			*out = vec_value_matrix(rows, 2, data);
+			goto done;
+		}
+
+			if (!strcmp(name, "vectorfield")) {
+				if (argc < 6 || argc > 7) {
+					snprintf(err, errsz, "eval: vectorfield(f, g, xmin, xmax, ymin, ymax[, n])");
+					goto fail;
+				}
+			if (args[0].kind != VEC_VALUE_EXPR ||
+			    args[1].kind != VEC_VALUE_EXPR ||
+			    args[2].kind != VEC_VALUE_NUMBER ||
+			    args[3].kind != VEC_VALUE_NUMBER ||
+			    args[4].kind != VEC_VALUE_NUMBER ||
+			    args[5].kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: vectorfield(f, g, xmin, xmax, ymin, ymax[, n])");
+				goto fail;
+			}
+			double xmin = vec_number_float64(args[2].num);
+			double xmax = vec_number_float64(args[3].num);
+			double ymin = vec_number_float64(args[4].num);
+			double ymax = vec_number_float64(args[5].num);
+			int n = 16;
+			if (argc == 7) {
+				if (args[6].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: vectorfield n must be 4..128");
+					goto fail;
+				}
+				double nn = vec_number_float64(args[6].num);
+				if (isnan(nn) || isinf(nn) || nn != trunc_d(nn) || nn < 4 || nn > 128) {
+					snprintf(err, errsz, "eval: vectorfield n must be 4..128");
+					goto fail;
+				}
+				n = (int)nn;
+			}
+
+				double *data = NULL;
+				int rows = 0;
+				if (plot_vectorfield_segments(e, args[0].expr, args[1].expr, xmin, xmax, ymin, ymax, n,
+						      &data, &rows, err, errsz) != 0)
+					goto fail;
+				*out = vec_value_matrix(rows, 2, data);
+				goto done;
+			}
+
+			if (!strcmp(name, "plane")) {
+					if (argc == 2 && args[0].kind == VEC_VALUE_ARRAY && args[0].len == 3 && args[1].kind == VEC_VALUE_NUMBER) {
+						double nx = args[0].arr[0];
+						double ny = args[0].arr[1];
+						double nz = args[0].arr[2];
+					double d = vec_number_float64(args[1].num);
+					if (nz == 0) {
+						snprintf(err, errsz, "eval: plane: n.z must be non-zero (not a function z(x,y))");
+						goto fail;
+					}
+					vec_node *termx = vec_node_binary_new('*', vec_node_number_new(vec_float(nx)), vec_node_ident_new("x", 1));
+					vec_node *termy = vec_node_binary_new('*', vec_node_number_new(vec_float(ny)), vec_node_ident_new("y", 1));
+					vec_node *sum = vec_node_binary_new('+', termx, termy);
+					vec_node *num = vec_node_binary_new('+', sum, vec_node_number_new(vec_float(d)));
+					vec_node *neg = vec_node_unary_new('-', num);
+					vec_node *div = vec_node_binary_new('/', neg, vec_node_number_new(vec_float(nz)));
+					vec_node *simp = div ? vec_node_simplify_owned(div) : NULL;
+					if (!simp) {
+						snprintf(err, errsz, "eval: out of memory");
+						goto fail;
+					}
+					*out = vec_value_expr(simp);
+					goto done;
+				}
+
+				if (argc == 3 &&
+				    args[0].kind == VEC_VALUE_ARRAY && args[0].len == 3 &&
+				    args[1].kind == VEC_VALUE_ARRAY && args[1].len == 3 &&
+				    args[2].kind == VEC_VALUE_ARRAY && args[2].len == 3) {
+					const double *p0 = args[0].arr;
+					const double *p1 = args[1].arr;
+					const double *p2 = args[2].arr;
+					double u0 = p1[0] - p0[0];
+					double u1 = p1[1] - p0[1];
+					double u2 = p1[2] - p0[2];
+					double v0 = p2[0] - p0[0];
+					double v1 = p2[1] - p0[1];
+					double v2 = p2[2] - p0[2];
+
+					double nx = u1 * v2 - u2 * v1;
+					double ny = u2 * v0 - u0 * v2;
+					double nz = u0 * v1 - u1 * v0;
+					if (nz == 0) {
+						snprintf(err, errsz, "eval: plane: points form vertical plane (not a function z(x,y))");
+						goto fail;
+					}
+					double d = -(nx * p0[0] + ny * p0[1] + nz * p0[2]);
+
+					vec_node *termx = vec_node_binary_new('*', vec_node_number_new(vec_float(nx)), vec_node_ident_new("x", 1));
+					vec_node *termy = vec_node_binary_new('*', vec_node_number_new(vec_float(ny)), vec_node_ident_new("y", 1));
+					vec_node *sum = vec_node_binary_new('+', termx, termy);
+					vec_node *num = vec_node_binary_new('+', sum, vec_node_number_new(vec_float(d)));
+					vec_node *neg = vec_node_unary_new('-', num);
+					vec_node *div = vec_node_binary_new('/', neg, vec_node_number_new(vec_float(nz)));
+					vec_node *simp = div ? vec_node_simplify_owned(div) : NULL;
+					if (!simp) {
+						snprintf(err, errsz, "eval: out of memory");
+						goto fail;
+					}
+					*out = vec_value_expr(simp);
+					goto done;
+				}
+
+				snprintf(err, errsz, "eval: plane(n, d) or plane(p0, p1, p2)");
+				goto fail;
+			}
+
+			/* Polynomial builtins. */
+			if (!strcmp(name, "polyval")) {
+				if (argc != 2 || args[0].kind != VEC_VALUE_ARRAY) {
+					snprintf(err, errsz, "eval: polyval(coeffs, x)");
+					goto fail;
 			}
 			char pbuf[96];
 			pbuf[0] = 0;
