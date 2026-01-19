@@ -5,6 +5,7 @@ APP = vector
 SRCS = \
 	vec_ast.c \
 	vec_cas.c \
+	vec_cas_ext.c \
 	vec_env.c \
 	vec_eval.c \
 	vec_fb.c \
