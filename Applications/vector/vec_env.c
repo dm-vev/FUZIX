@@ -27,9 +27,13 @@ void vec_env_init(vec_env *e)
 	(void)vec_env_set_var(e, "pi", vec_value_number(vec_float(M_PI)));
 	(void)vec_env_set_var(e, "tau", vec_value_number(vec_float(2 * M_PI)));
 	(void)vec_env_set_var(e, "e", vec_value_number(vec_float(M_E)));
+	(void)vec_env_set_var(e, "phi", vec_value_number(vec_float((1 + sqrt(5.0)) / 2)));
 	(void)vec_env_set_var(e, "sqrt2", vec_value_number(vec_float(M_SQRT2)));
+	(void)vec_env_set_var(e, "sqrt3", vec_value_number(vec_float(sqrt(3.0))));
+	(void)vec_env_set_var(e, "sqrt5", vec_value_number(vec_float(sqrt(5.0))));
 	(void)vec_env_set_var(e, "ln2", vec_value_number(vec_float(M_LN2)));
 	(void)vec_env_set_var(e, "ln10", vec_value_number(vec_float(M_LN10)));
+	(void)vec_env_set_var(e, "i", vec_value_complex(0, 1));
 }
 
 void vec_env_destroy(vec_env *e)
