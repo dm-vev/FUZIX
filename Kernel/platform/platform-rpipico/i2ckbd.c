@@ -50,6 +50,7 @@ static struct picocalc_status status_cache = {
 
 static struct picocalc_i2c_stats i2c_stats;
 static uint32_t i2c_backoff = PICOCALC_I2C_BACKOFF_MIN_US;
+static struct picocalc_poll_config poll_cfg;
 
 static uint8_t status_phase;
 static int ctrlheld;
@@ -61,7 +62,7 @@ static uint32_t now_ms(void)
 
 static void i2c_record_ok(void)
 {
-    i2c_backoff = PICOCALC_I2C_BACKOFF_MIN_US;
+    i2c_backoff = poll_cfg.backoff_min_us ? poll_cfg.backoff_min_us : PICOCALC_I2C_BACKOFF_MIN_US;
     i2c_stats.backoff_us = i2c_backoff;
     i2c_stats.last_ok_ms = now_ms();
 }
@@ -69,10 +70,14 @@ static void i2c_record_ok(void)
 static void i2c_record_error(void)
 {
     uint32_t next = i2c_backoff * 2u;
-    if (next < PICOCALC_I2C_BACKOFF_MIN_US)
-        next = PICOCALC_I2C_BACKOFF_MIN_US;
-    if (next > PICOCALC_I2C_BACKOFF_MAX_US)
-        next = PICOCALC_I2C_BACKOFF_MAX_US;
+    uint32_t min_us = poll_cfg.backoff_min_us ? poll_cfg.backoff_min_us : PICOCALC_I2C_BACKOFF_MIN_US;
+    uint32_t max_us = poll_cfg.backoff_max_us ? poll_cfg.backoff_max_us : PICOCALC_I2C_BACKOFF_MAX_US;
+    if (max_us < min_us)
+        max_us = min_us;
+    if (next < min_us)
+        next = min_us;
+    if (next > max_us)
+        next = max_us;
     i2c_backoff = next;
     i2c_stats.backoff_us = i2c_backoff;
     i2c_stats.last_err_ms = now_ms();
@@ -94,6 +99,12 @@ void init_i2c_kbd(){
     memset(&i2c_stats, 0, sizeof(i2c_stats));
     i2c_backoff = PICOCALC_I2C_BACKOFF_MIN_US;
     i2c_stats.backoff_us = i2c_backoff;
+    memset(&poll_cfg, 0, sizeof(poll_cfg));
+    poll_cfg.kbd_poll_us = PICOCALC_KBD_POLL_US;
+    poll_cfg.status_poll_us = PICOCALC_STATUS_POLL_US;
+    poll_cfg.backoff_min_us = PICOCALC_I2C_BACKOFF_MIN_US;
+    poll_cfg.backoff_max_us = PICOCALC_I2C_BACKOFF_MAX_US;
+    poll_cfg.fifo_max_per_poll = 4;
     i2c_inited = 1;
 }
 
@@ -151,8 +162,13 @@ static int i2c_kbd_read_reg_u8(uint8_t reg, uint8_t *out)
         spin_unlock(i2c_kbd_lock, spin2);
         return -1;
     }
-    if (resp[0] != reg)
+    if (resp[0] != reg) {
+        uint32_t spin2 = spin_lock_blocking(i2c_kbd_lock);
+        i2c_stats.reg_errors++;
+        i2c_record_error();
+        spin_unlock(i2c_kbd_lock, spin2);
         return -1;
+    }
     *out = resp[1];
     uint32_t spin3 = spin_lock_blocking(i2c_kbd_lock);
     i2c_record_ok();
@@ -210,7 +226,17 @@ void picocalc_kbd_poll(void)
     if (i2c_inited == 0)
         return;
 
-    for (int iter = 0; iter < 4; iter++) {
+    uint32_t max_per = 4;
+    if (i2c_kbd_lock) {
+        uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
+        if (poll_cfg.fifo_max_per_poll)
+            max_per = poll_cfg.fifo_max_per_poll;
+        spin_unlock(i2c_kbd_lock, spin);
+    }
+    if (max_per > 32)
+        max_per = 32;
+
+    for (uint32_t iter = 0; iter < max_per; iter++) {
         uint16_t buff = 0;
         if (i2c_kbd_read_fifo(&buff) < 0)
             return;
@@ -277,6 +303,33 @@ int picocalc_set_lcd_backlight(uint8_t level)
     return r;
 }
 
+int picocalc_set_kbd_backlight(uint8_t level)
+{
+    int r = I2C_Send_RegData(I2C_KBD_ADDR, 0x0A, (char)level);
+    if (r == 0) {
+        uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
+        status_cache.kbd_backlight = level;
+        spin_unlock(i2c_kbd_lock, spin);
+    }
+    return r;
+}
+
+int picocalc_poweroff(uint8_t seconds)
+{
+    if (seconds == 0)
+        seconds = 6;
+    if (seconds < 6)
+        seconds = 6;
+    return I2C_Send_RegData(I2C_KBD_ADDR, 0x0E, (char)seconds);
+}
+
+int picocalc_reset_kbd(uint8_t seconds)
+{
+    if (seconds == 0)
+        seconds = 1;
+    return I2C_Send_RegData(I2C_KBD_ADDR, 0x08, (char)seconds);
+}
+
 int I2C_Send_RegData(int i2caddr,int reg,char command){
     int retval;
     unsigned char I2C_Send_Buffer[2];
@@ -320,4 +373,52 @@ void picocalc_i2c_stats_snapshot(struct picocalc_i2c_stats *out)
     uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
     *out = i2c_stats;
     spin_unlock(i2c_kbd_lock, spin);
+}
+
+void picocalc_poll_config_snapshot(struct picocalc_poll_config *out)
+{
+    if (!i2c_inited || i2c_kbd_lock == NULL) {
+        memset(out, 0, sizeof(*out));
+        out->kbd_poll_us = PICOCALC_KBD_POLL_US;
+        out->status_poll_us = PICOCALC_STATUS_POLL_US;
+        out->backoff_min_us = PICOCALC_I2C_BACKOFF_MIN_US;
+        out->backoff_max_us = PICOCALC_I2C_BACKOFF_MAX_US;
+        out->fifo_max_per_poll = 4;
+        return;
+    }
+    uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
+    *out = poll_cfg;
+    spin_unlock(i2c_kbd_lock, spin);
+}
+
+int picocalc_poll_config_set(const struct picocalc_poll_config *in)
+{
+    if (!i2c_inited || i2c_kbd_lock == NULL)
+        return -1;
+
+    struct picocalc_poll_config cfg = *in;
+    if (cfg.kbd_poll_us < 1000)
+        return -1;
+    if (cfg.status_poll_us < 10000)
+        return -1;
+    if (cfg.backoff_min_us < 1000)
+        return -1;
+    if (cfg.backoff_max_us < cfg.backoff_min_us)
+        return -1;
+    if (cfg.backoff_max_us > 5000000)
+        return -1;
+    if (cfg.fifo_max_per_poll == 0)
+        cfg.fifo_max_per_poll = 4;
+    if (cfg.fifo_max_per_poll > 32)
+        cfg.fifo_max_per_poll = 32;
+
+    uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
+    poll_cfg = cfg;
+    if (i2c_backoff < poll_cfg.backoff_min_us)
+        i2c_backoff = poll_cfg.backoff_min_us;
+    if (i2c_backoff > poll_cfg.backoff_max_us)
+        i2c_backoff = poll_cfg.backoff_max_us;
+    i2c_stats.backoff_us = i2c_backoff;
+    spin_unlock(i2c_kbd_lock, spin);
+    return 0;
 }
