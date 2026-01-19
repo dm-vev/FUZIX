@@ -13,9 +13,10 @@
 
 #define I2C_KBD_ADDR 0x1F
 
+#define I2C_KBD_TIMEOUT_US 1000
+
 void init_i2c_kbd();
 int read_i2c_kbd();
-int write_i2c_kbd();
 int I2C_Send_RegData(int i2caddr,int reg,char command);
 
 #endif
