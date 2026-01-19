@@ -10,6 +10,7 @@
 #include <printf.h>
 #include "globals.h"
 #include "devfb.h"
+#include "devaudio_stream.h"
 #include "picosdk.h"
 #include <hardware/irq.h>
 #include <hardware/structs/timer.h>
@@ -32,7 +33,8 @@ struct devsw dev_tab[] =  /* The device driver switch table */
   {  no_open,      sys_close,    sys_read, sys_write, sys_ioctl  },
   /* 5-7: unused */
   {  no_open,      no_close,   no_rdwr,   no_rdwr,  no_ioctl  },
-  {  no_open,      no_close,   no_rdwr,   no_rdwr,  no_ioctl  },
+  /* 6: /dev/audio - userspace mixer streams */
+  {  audmux_open,  audmux_close, audmux_read, audmux_write, no_ioctl },
   {  no_open,      no_close,   no_rdwr,   no_rdwr,  no_ioctl  },
   /* 8: /dev/rd? - PSRAM-backed RAM disk */
   {  rd_open,      no_close,   rd_read,   rd_write, no_ioctl  },

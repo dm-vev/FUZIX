@@ -32,6 +32,7 @@ add_executable(fuzix
 	devsdspi.c
 	devrd_psram.c
 	devfb.c
+	devaudio_stream.c
 	lcdspi.c
 	i2ckbd.c
 	devtty.c

@@ -100,6 +100,8 @@
 #define AUDIO_OUTPUT_MODE_DAC 2
 #define AUDIO_OUTPUT_MODE AUDIO_OUTPUT_MODE_PWM
 #define AUDIO_PWM_PIN 22
+#define DEV_AUDIO0 0x0500
+#define DEV_AUDIO  0x0600
 
 /* Program layout */
 

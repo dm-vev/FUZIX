@@ -4,6 +4,10 @@
 #include <tty.h>
 #include <netdev.h>
 
+#ifdef CONFIG_AUDIO_PCM
+#include "devaudio_stream.h"
+#endif
+
 #if defined(CONFIG_LARGE_IO_DIRECT)
 #define read_direct(dev, flag)		(!udata.u_sysio && CONFIG_LARGE_IO_DIRECT(dev))
 #elif (NBUFS >= 32)
@@ -345,7 +349,6 @@ int dev_openi(inoptr *ino, struct oft *ofp, uint16_t flag)
 {
         int ret;
         uint16_t da = (*ino)->c_node.i_addr[0];
-        used(ofp);
         /* Handle the special casing where we need to know about inodes */
 
         /* /dev/tty processing */
@@ -360,6 +363,13 @@ int dev_openi(inoptr *ino, struct oft *ofp, uint16_t flag)
                 i_ref(*ino);
                 /* fall through opening the real device */
         }
+#ifdef CONFIG_AUDIO_PCM
+	/* /dev/audio clone processing */
+	if (da == DEV_AUDIO) {
+		if (audmux_openi(ofp, flag) != 0)
+			return -1;
+	}
+#endif
         /* normal device opening */
         ret = d_open((int)da, flag);
         /* errors and non tty opens */
