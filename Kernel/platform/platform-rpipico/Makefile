@@ -56,6 +56,7 @@ clean:
 	rm -f uf2conv
 	$(MAKE) -C ../../../Library/libs -f Makefile.armm0 clean
 	$(MAKE) -C ../../../Applications/util -f Makefile.armm0 clean
+	$(MAKE) -C ../../../Applications/audio -f Makefile.armm0 clean
 	$(MAKE) -C ../../../Applications/netd -f Makefile.armm0 clean
 	$(MAKE) -C ../../../Applications/V7/cmd -f Makefile.armm0 clean
 	$(MAKE) -C ../../../Applications/V7/cmd/sh -f Makefile.armm0 clean
@@ -69,6 +70,7 @@ clean:
 world: build/fuzix.elf
 	$(MAKE) -C ../../../Library/libs -f Makefile.armm0
 	$(MAKE) -C ../../../Applications/util -f Makefile.armm0
+	$(MAKE) -C ../../../Applications/audio -f Makefile.armm0
 	$(MAKE) -C ../../../Applications/netd -f Makefile.armm0
 	$(MAKE) -C ../../../Applications/V7/cmd -f Makefile.armm0
 	$(MAKE) -C ../../../Applications/V7/cmd/sh -f Makefile.armm0
