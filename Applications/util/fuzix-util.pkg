@@ -127,7 +127,6 @@ f 0755 /bin/uud         uud
 f 0755 /bin/uue         uue
 f 0755 /bin/cu          cu
 f 0755 /bin/vile        vile
-l /bin/vile /bin/vi
 f 0755 /bin/wc          wc
 f 0755 /bin/which       which
 f 0755 /bin/who         who
