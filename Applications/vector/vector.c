@@ -1,4 +1,7 @@
+#include "vec_number.h"
+
 #include <errno.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -18,7 +21,12 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	puts("Vector (FUZIX) - port in progress");
+	{
+		char buf[64];
+		vec_number pi = vec_float(M_PI);
+		puts("Vector (FUZIX) - port in progress");
+		printf("pi = %s\n", vec_number_string(pi, 12, buf, sizeof(buf)));
+	}
 	puts("Type :quit to exit.");
 
 	for (;;) {
@@ -42,4 +50,3 @@ int main(int argc, char **argv)
 
 	return 0;
 }
-

@@ -3,6 +3,8 @@ include $(ROOT)/Target/rules.armm0
 
 APP = vector
 SRCS = \
+	vec_number.c \
+	vec_value.c \
 	vector.c
 OBJS = $(SRCS:.c=.o)
 
@@ -20,4 +22,3 @@ clean:
 
 .c.o:
 	$(CC) $(CFLAGS) $(COPT) -c -o $@ $<
-
