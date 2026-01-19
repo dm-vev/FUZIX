@@ -9,6 +9,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -211,6 +212,8 @@ static void ui_handle_command(struct ui_state *u, const char *cmdline)
 			snprintf(u->graph_src, sizeof(u->graph_src), "%s", expr);
 			ui_set_message(u, "plot updated");
 		}
+		if (!u->graph && !*expr)
+			ui_set_message(u, "plot: no expression set");
 		ui_switch_tab(u, TAB_PLOT);
 		return;
 	}
@@ -226,6 +229,94 @@ static void ui_handle_command(struct ui_state *u, const char *cmdline)
 	}
 	if (!strcmp(cmdline, "stack")) {
 		ui_switch_tab(u, TAB_STACK);
+		return;
+	}
+	if (!strcmp(cmdline, "resetview")) {
+		u->x_min = -10;
+		u->x_max = 10;
+		u->y_min = -10;
+		u->y_max = 10;
+		ui_set_message(u, "view reset");
+		return;
+	}
+	if (!strncmp(cmdline, "x ", 2)) {
+		char *endp = NULL;
+		double a = strtod(cmdline + 2, &endp);
+		double b = endp ? strtod(endp, &endp) : 0;
+		if (!isfinite(a) || !isfinite(b) || a >= b) {
+			ui_set_message(u, "usage: :x A B (A<B)");
+			return;
+		}
+		u->x_min = a;
+		u->x_max = b;
+		ui_set_message(u, "x updated");
+		return;
+	}
+	if (!strncmp(cmdline, "y ", 2)) {
+		char *endp = NULL;
+		double a = strtod(cmdline + 2, &endp);
+		double b = endp ? strtod(endp, &endp) : 0;
+		if (!isfinite(a) || !isfinite(b) || a >= b) {
+			ui_set_message(u, "usage: :y A B (A<B)");
+			return;
+		}
+		u->y_min = a;
+		u->y_max = b;
+		ui_set_message(u, "y updated");
+		return;
+	}
+	if (!strncmp(cmdline, "view ", 5)) {
+		char *endp = NULL;
+		double xmin = strtod(cmdline + 5, &endp);
+		double xmax = endp ? strtod(endp, &endp) : 0;
+		double ymin = endp ? strtod(endp, &endp) : 0;
+		double ymax = endp ? strtod(endp, &endp) : 0;
+		if (!isfinite(xmin) || !isfinite(xmax) || !isfinite(ymin) || !isfinite(ymax) ||
+		    xmin >= xmax || ymin >= ymax) {
+			ui_set_message(u, "usage: :view xmin xmax ymin ymax");
+			return;
+		}
+		u->x_min = xmin;
+		u->x_max = xmax;
+		u->y_min = ymin;
+		u->y_max = ymax;
+		ui_set_message(u, "view updated");
+		return;
+	}
+	if (!strcmp(cmdline, "autoscale")) {
+		if (!u->graph) {
+			ui_set_message(u, "autoscale: no plot");
+			return;
+		}
+		double miny = 1e300;
+		double maxy = -1e300;
+		for (int i = 0; i < 200; i++) {
+			double x = u->x_min + ((double)i / 199.0) * (u->x_max - u->x_min);
+			vec_value v;
+			char ebuf[64];
+			memset(&v, 0, sizeof(v));
+			ebuf[0] = 0;
+			if (vec_eval_node_override(&u->env, u->graph, "x", vec_value_number(vec_float(x)),
+						   &v, ebuf, sizeof(ebuf)) != 0)
+				continue;
+			if (v.kind != VEC_VALUE_NUMBER)
+				continue;
+			double y = vec_number_float64(v.num);
+			if (!isfinite(y))
+				continue;
+			if (y < miny)
+				miny = y;
+			if (y > maxy)
+				maxy = y;
+		}
+		if (miny <= maxy && isfinite(miny) && isfinite(maxy) && miny != maxy) {
+			double pad = (maxy - miny) * 0.1;
+			u->y_min = miny - pad;
+			u->y_max = maxy + pad;
+			ui_set_message(u, "autoscaled");
+		} else {
+			ui_set_message(u, "autoscale: no finite samples");
+		}
 		return;
 	}
 	if (!strcmp(cmdline, "clear")) {
@@ -331,7 +422,17 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 		vec_value v;
 		memset(err, 0, sizeof(err));
 		if (vec_eval_node(&u->env, a->expr, &v, err, sizeof(err)) != 0) {
-			ui_append_line(u, err[0] ? err : "eval error");
+			if (a->expr && vec_node_has_ident(a->expr, "x")) {
+				if (u->graph)
+					vec_node_destroy(u->graph);
+				u->graph = a->expr;
+				a->expr = NULL;
+				snprintf(u->graph_src, sizeof(u->graph_src), "%s", line);
+				ui_append_line(u, "= <plot expr>");
+				ui_set_message(u, "plot expr captured (F2)");
+			} else {
+				ui_append_line(u, err[0] ? err : "eval error");
+			}
 			continue;
 		}
 		if (v.kind == VEC_VALUE_NUMBER) {
@@ -339,6 +440,13 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 			ui_append_line(u, vec_number_string(v.num, u->env.prec, buf, sizeof(buf)));
 		} else {
 			ui_append_line(u, "<value>");
+		}
+		if (a->expr && vec_node_has_ident(a->expr, "x")) {
+			if (u->graph)
+				vec_node_destroy(u->graph);
+			u->graph = a->expr;
+			a->expr = NULL;
+			snprintf(u->graph_src, sizeof(u->graph_src), "%s", line);
 		}
 		vec_value_destroy(&v);
 	}
@@ -556,15 +664,26 @@ static void ui_render_help(struct ui_state *u)
 		"",
 		"terminal:",
 		"  Enter   evaluate",
+		"  Ctrl+G  plot tab",
 		"  Up/Down history",
 		"  Left/Right edit",
 		"  Tab     (todo) autocomplete",
+		"",
+		"plot:",
+		"  :plot EXPR   set plot expr",
+		"  arrows pan   +/- zoom",
+		"  a autoscale",
 		"",
 		"commands:",
 		"  :help   toggle this help",
 		"  :exact  exact rationals",
 		"  :float  float mode",
 		"  :prec N print precision",
+		"  :x A B  set x-range",
+		"  :y A B  set y-range",
+		"  :view xmin xmax ymin ymax",
+		"  :resetview",
+		"  :autoscale",
 	};
 	int help_lines = (int)(sizeof(help) / sizeof(help[0]));
 
@@ -659,6 +778,12 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 		break;
 	case VEC_KEY_TAB:
 		break;
+	case VEC_KEY_CTRL:
+		if (k.ctrl == 0x07) {
+			ui_switch_tab(u, TAB_PLOT);
+			break;
+		}
+		break;
 	case VEC_KEY_BACKSPACE:
 		if (u->tab == TAB_TERMINAL)
 			ui_backspace(u);
@@ -725,7 +850,9 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 		if (u->tab == TAB_TERMINAL && k.r >= 0x20 && k.r != 0x7f)
 			ui_insert_char(u, (int)k.r);
 		if (u->tab == TAB_PLOT) {
-			if (k.r == '+' || k.r == '=') {
+			if (k.r == 'a' || k.r == 'A') {
+				ui_handle_command(u, "autoscale");
+			} else if (k.r == '+' || k.r == '=') {
 				double cx = (u->x_min + u->x_max) * 0.5;
 				double cy = (u->y_min + u->y_max) * 0.5;
 				double rx = (u->x_max - u->x_min) * 0.5 * 0.8;

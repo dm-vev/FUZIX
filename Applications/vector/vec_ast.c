@@ -146,3 +146,28 @@ void vec_node_destroy(vec_node *n)
 	free(n);
 }
 
+int vec_node_has_ident(const vec_node *n, const char *name)
+{
+	if (!n || !name)
+		return 0;
+	switch (n->kind) {
+	case VEC_NODE_IDENT:
+		return (n->u.ident.name && !strcmp(n->u.ident.name, name)) ? 1 : 0;
+	case VEC_NODE_NUMBER:
+		return 0;
+	case VEC_NODE_UNARY:
+		return vec_node_has_ident(n->u.unary.x, name);
+	case VEC_NODE_BINARY:
+		return vec_node_has_ident(n->u.binary.left, name) || vec_node_has_ident(n->u.binary.right, name);
+	case VEC_NODE_CALL:
+		for (size_t i = 0; i < n->u.call.argc; i++) {
+			if (vec_node_has_ident(n->u.call.args[i], name))
+				return 1;
+		}
+		return 0;
+	case VEC_NODE_COMPARE:
+		return vec_node_has_ident(n->u.compare.left, name) || vec_node_has_ident(n->u.compare.right, name);
+	default:
+		return 0;
+	}
+}
