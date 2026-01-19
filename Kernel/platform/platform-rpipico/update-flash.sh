@@ -433,6 +433,7 @@ bget ../../../Applications/netd/route
 bget ../../../Applications/netd/netstat
 bget ../../../Applications/netd/arp
 bget ../../../Applications/netd/nc
+bget ../../../Applications/mc/mc
 
 chmod 0755 netd-slip
 chmod 0755 pppd-fuzix
@@ -449,6 +450,7 @@ chmod 0755 route
 chmod 0755 netstat
 chmod 0755 arp
 chmod 0755 nc
+chmod 0755 mc
 ln htget wget
 ln dig dnslookup
 
