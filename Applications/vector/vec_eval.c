@@ -1,8 +1,12 @@
 #include "vec_eval.h"
 #include "vec_cas.h"
+#include "vec_cas_ext.h"
 #include "vec_linalg.h"
 #include "vec_matrix.h"
 #include "vec_numeric.h"
+#include "vec_poly.h"
+#include "vec_poly_factor.h"
+#include "vec_poly_rat.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -677,6 +681,351 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 			return -1;
 		}
 		*out = vec_value_expr(simp);
+		return 0;
+	}
+	if (!strcmp(name, "expand") && argc == 1) {
+		vec_node *ex = vec_node_expand(n->u.call.args[0]);
+		vec_node *simp = ex ? vec_node_simplify_owned(ex) : NULL;
+		if (!simp) {
+			snprintf(err, errsz, "eval: out of memory");
+			return -1;
+		}
+		*out = vec_value_expr(simp);
+		return 0;
+	}
+	if (!strcmp(name, "horner") && argc == 2) {
+		const vec_node *v = n->u.call.args[1];
+		if (!v || v->kind != VEC_NODE_IDENT || !v->u.ident.name) {
+			snprintf(err, errsz, "eval: horner expects second arg as identifier");
+			return -1;
+		}
+		char pbuf[96];
+		pbuf[0] = 0;
+		vec_poly p = {0};
+		if (vec_poly_from_expr(e, n->u.call.args[0], v->u.ident.name, &p, pbuf, sizeof(pbuf)) != 0) {
+			snprintf(err, errsz, "eval: horner: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		vec_node *tmp = vec_poly_to_expr_horner(&p, v->u.ident.name);
+		vec_poly_destroy(&p);
+		vec_node *simp = tmp ? vec_node_simplify_owned(tmp) : NULL;
+		if (!simp) {
+			snprintf(err, errsz, "eval: out of memory");
+			return -1;
+		}
+		*out = vec_value_expr(simp);
+		return 0;
+	}
+	if (!strcmp(name, "degree") && argc == 2) {
+		const vec_node *v = n->u.call.args[1];
+		if (!v || v->kind != VEC_NODE_IDENT || !v->u.ident.name) {
+			snprintf(err, errsz, "eval: degree expects second arg as identifier");
+			return -1;
+		}
+		char pbuf[96];
+		pbuf[0] = 0;
+		vec_poly p = {0};
+		if (vec_poly_from_expr(e, n->u.call.args[0], v->u.ident.name, &p, pbuf, sizeof(pbuf)) != 0) {
+			snprintf(err, errsz, "eval: degree: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		int deg = vec_poly_degree(&p);
+		vec_poly_destroy(&p);
+		*out = vec_value_number(vec_rat_number(vec_rat_int((int64_t)deg)));
+		return 0;
+	}
+	if (!strcmp(name, "coeff") && argc == 3) {
+		const vec_node *v = n->u.call.args[1];
+		if (!v || v->kind != VEC_NODE_IDENT || !v->u.ident.name) {
+			snprintf(err, errsz, "eval: coeff expects second arg as identifier");
+			return -1;
+		}
+		vec_value nv;
+		memset(&nv, 0, sizeof(nv));
+		if (vec_eval_node_impl(e, n->u.call.args[2], ov_name, ov_value, &nv, err, errsz) != 0)
+			return -1;
+		if (nv.kind != VEC_VALUE_NUMBER) {
+			vec_value_destroy(&nv);
+			snprintf(err, errsz, "eval: coeff expects non-negative integer n");
+			return -1;
+		}
+		double nn = vec_number_float64(nv.num);
+		vec_value_destroy(&nv);
+		if (isnan(nn) || isinf(nn) || nn != trunc_d(nn) || nn < 0) {
+			snprintf(err, errsz, "eval: coeff expects non-negative integer n");
+			return -1;
+		}
+		int ncoef = (int)nn;
+
+		char pbuf[96];
+		pbuf[0] = 0;
+		vec_poly p = {0};
+		if (vec_poly_from_expr(e, n->u.call.args[0], v->u.ident.name, &p, pbuf, sizeof(pbuf)) != 0) {
+			snprintf(err, errsz, "eval: coeff: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		double c = 0;
+		if ((size_t)ncoef < p.len)
+			c = p.coeffs[ncoef];
+		vec_poly_destroy(&p);
+		*out = vec_value_number(vec_float(c));
+		return 0;
+	}
+	if (!strcmp(name, "collect") && argc == 2) {
+		const vec_node *v = n->u.call.args[1];
+		if (!v || v->kind != VEC_NODE_IDENT || !v->u.ident.name) {
+			snprintf(err, errsz, "eval: collect expects second arg as identifier");
+			return -1;
+		}
+		char pbuf[96];
+		pbuf[0] = 0;
+		vec_poly p = {0};
+		if (vec_poly_from_expr(e, n->u.call.args[0], v->u.ident.name, &p, pbuf, sizeof(pbuf)) != 0) {
+			snprintf(err, errsz, "eval: collect: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		vec_node *tmp = vec_poly_to_expr_horner(&p, v->u.ident.name);
+		vec_poly_destroy(&p);
+		vec_node *simp = tmp ? vec_node_simplify_owned(tmp) : NULL;
+		if (!simp) {
+			snprintf(err, errsz, "eval: out of memory");
+			return -1;
+		}
+		*out = vec_value_expr(simp);
+		return 0;
+	}
+	if (!strcmp(name, "gcd") && (argc == 2 || argc == 3)) {
+		const char *var_name = "x";
+		if (argc == 3) {
+			const vec_node *v = n->u.call.args[2];
+			if (!v || v->kind != VEC_NODE_IDENT || !v->u.ident.name) {
+				snprintf(err, errsz, "eval: gcd expects third arg as identifier");
+				return -1;
+			}
+			var_name = v->u.ident.name;
+		}
+
+		char pbuf[96];
+		pbuf[0] = 0;
+		vec_poly_rat a = {0};
+		vec_poly_rat b = {0};
+		vec_poly_rat g = {0};
+		if (vec_poly_rat_from_expr(e, n->u.call.args[0], var_name, &a, pbuf, sizeof(pbuf)) != 0) {
+			snprintf(err, errsz, "eval: gcd: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		pbuf[0] = 0;
+		if (vec_poly_rat_from_expr(e, n->u.call.args[1], var_name, &b, pbuf, sizeof(pbuf)) != 0) {
+			vec_poly_rat_destroy(&a);
+			snprintf(err, errsz, "eval: gcd: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		pbuf[0] = 0;
+		if (vec_poly_rat_gcd(&a, &b, &g, pbuf, sizeof(pbuf)) != 0) {
+			vec_poly_rat_destroy(&a);
+			vec_poly_rat_destroy(&b);
+			snprintf(err, errsz, "eval: gcd: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		vec_poly_rat_destroy(&a);
+		vec_poly_rat_destroy(&b);
+		vec_node *tmp = vec_poly_rat_to_expr_horner(&g, var_name);
+		vec_poly_rat_destroy(&g);
+		vec_node *simp = tmp ? vec_node_simplify_owned(tmp) : NULL;
+		if (!simp) {
+			snprintf(err, errsz, "eval: out of memory");
+			return -1;
+		}
+		*out = vec_value_expr(simp);
+		return 0;
+	}
+	if (!strcmp(name, "lcm") && (argc == 2 || argc == 3)) {
+		const char *var_name = "x";
+		if (argc == 3) {
+			const vec_node *v = n->u.call.args[2];
+			if (!v || v->kind != VEC_NODE_IDENT || !v->u.ident.name) {
+				snprintf(err, errsz, "eval: lcm expects third arg as identifier");
+				return -1;
+			}
+			var_name = v->u.ident.name;
+		}
+
+		char pbuf[96];
+		pbuf[0] = 0;
+		vec_poly_rat a = {0};
+		vec_poly_rat b = {0};
+		vec_poly_rat g = {0};
+		vec_poly_rat ab = {0};
+		vec_poly_rat q = {0};
+		vec_poly_rat r = {0};
+		if (vec_poly_rat_from_expr(e, n->u.call.args[0], var_name, &a, pbuf, sizeof(pbuf)) != 0) {
+			snprintf(err, errsz, "eval: lcm: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		pbuf[0] = 0;
+		if (vec_poly_rat_from_expr(e, n->u.call.args[1], var_name, &b, pbuf, sizeof(pbuf)) != 0) {
+			vec_poly_rat_destroy(&a);
+			snprintf(err, errsz, "eval: lcm: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		pbuf[0] = 0;
+		if (vec_poly_rat_gcd(&a, &b, &g, pbuf, sizeof(pbuf)) != 0) {
+			vec_poly_rat_destroy(&a);
+			vec_poly_rat_destroy(&b);
+			snprintf(err, errsz, "eval: lcm: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		pbuf[0] = 0;
+		if (vec_poly_rat_mul(&a, &b, &ab, pbuf, sizeof(pbuf)) != 0) {
+			vec_poly_rat_destroy(&a);
+			vec_poly_rat_destroy(&b);
+			vec_poly_rat_destroy(&g);
+			snprintf(err, errsz, "eval: lcm: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		vec_poly_rat_destroy(&a);
+		vec_poly_rat_destroy(&b);
+		pbuf[0] = 0;
+		if (vec_poly_rat_divmod(&ab, &g, &q, &r, pbuf, sizeof(pbuf)) != 0) {
+			vec_poly_rat_destroy(&ab);
+			vec_poly_rat_destroy(&g);
+			snprintf(err, errsz, "eval: lcm: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		vec_poly_rat_destroy(&ab);
+		vec_poly_rat_destroy(&g);
+		if (vec_poly_rat_degree(&r) >= 0) {
+			vec_poly_rat_destroy(&q);
+			vec_poly_rat_destroy(&r);
+			snprintf(err, errsz, "eval: lcm: non-exact division");
+			return -1;
+		}
+		vec_poly_rat_destroy(&r);
+		pbuf[0] = 0;
+		if (vec_poly_rat_monic(&q, pbuf, sizeof(pbuf)) != 0) {
+			vec_poly_rat_destroy(&q);
+			snprintf(err, errsz, "eval: lcm: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		vec_node *tmp = vec_poly_rat_to_expr_horner(&q, var_name);
+		vec_poly_rat_destroy(&q);
+		vec_node *simp = tmp ? vec_node_simplify_owned(tmp) : NULL;
+		if (!simp) {
+			snprintf(err, errsz, "eval: out of memory");
+			return -1;
+		}
+		*out = vec_value_expr(simp);
+		return 0;
+	}
+	if (!strcmp(name, "resultant") && argc == 3) {
+		const vec_node *v = n->u.call.args[2];
+		if (!v || v->kind != VEC_NODE_IDENT || !v->u.ident.name) {
+			snprintf(err, errsz, "eval: resultant expects third arg as identifier");
+			return -1;
+		}
+
+		char pbuf[96];
+		pbuf[0] = 0;
+		vec_poly_rat a = {0};
+		vec_poly_rat b = {0};
+		vec_rat res = vec_rat_int(0);
+		if (vec_poly_rat_from_expr(e, n->u.call.args[0], v->u.ident.name, &a, pbuf, sizeof(pbuf)) != 0) {
+			snprintf(err, errsz, "eval: resultant: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		pbuf[0] = 0;
+		if (vec_poly_rat_from_expr(e, n->u.call.args[1], v->u.ident.name, &b, pbuf, sizeof(pbuf)) != 0) {
+			vec_poly_rat_destroy(&a);
+			snprintf(err, errsz, "eval: resultant: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		pbuf[0] = 0;
+		if (vec_poly_rat_resultant(&a, &b, &res, pbuf, sizeof(pbuf)) != 0) {
+			vec_poly_rat_destroy(&a);
+			vec_poly_rat_destroy(&b);
+			snprintf(err, errsz, "eval: resultant: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		vec_poly_rat_destroy(&a);
+		vec_poly_rat_destroy(&b);
+		if (e->mode == VEC_MODE_EXACT)
+			*out = vec_value_number(vec_rat_number(res));
+		else
+			*out = vec_value_number(vec_float(vec_rat_float64(res)));
+		return 0;
+	}
+	if (!strcmp(name, "factor") && (argc == 1 || argc == 2)) {
+		const char *var_name = "x";
+		if (argc == 2) {
+			const vec_node *v = n->u.call.args[1];
+			if (!v || v->kind != VEC_NODE_IDENT || !v->u.ident.name) {
+				snprintf(err, errsz, "eval: factor expects second arg as identifier");
+				return -1;
+			}
+			var_name = v->u.ident.name;
+		}
+
+		char pbuf[96];
+		pbuf[0] = 0;
+		vec_poly_rat p = {0};
+		if (vec_poly_rat_from_expr(e, n->u.call.args[0], var_name, &p, pbuf, sizeof(pbuf)) != 0) {
+			snprintf(err, errsz, "eval: factor: %s", pbuf[0] ? pbuf : "invalid polynomial");
+			return -1;
+		}
+		pbuf[0] = 0;
+		vec_node *tmp = vec_poly_rat_factor_integer(&p, var_name, pbuf, sizeof(pbuf));
+		vec_poly_rat_destroy(&p);
+		if (!tmp) {
+			snprintf(err, errsz, "eval: factor: %s", pbuf[0] ? pbuf : "out of memory");
+			return -1;
+		}
+		vec_node *simp = vec_node_simplify_owned(tmp);
+		if (!simp) {
+			snprintf(err, errsz, "eval: out of memory");
+			return -1;
+		}
+		*out = vec_value_expr(simp);
+		return 0;
+	}
+	if (!strcmp(name, "series") && argc == 4) {
+		const vec_node *v = n->u.call.args[1];
+		if (!v || v->kind != VEC_NODE_IDENT || !v->u.ident.name) {
+			snprintf(err, errsz, "eval: series expects second arg as identifier");
+			return -1;
+		}
+		vec_value av;
+		memset(&av, 0, sizeof(av));
+		if (vec_eval_node_impl(e, n->u.call.args[2], ov_name, ov_value, &av, err, errsz) != 0)
+			return -1;
+		if (av.kind != VEC_VALUE_NUMBER) {
+			vec_value_destroy(&av);
+			snprintf(err, errsz, "eval: series expects numeric a");
+			return -1;
+		}
+		double a = vec_number_float64(av.num);
+		vec_value_destroy(&av);
+
+		vec_value nv;
+		memset(&nv, 0, sizeof(nv));
+		if (vec_eval_node_impl(e, n->u.call.args[3], ov_name, ov_value, &nv, err, errsz) != 0)
+			return -1;
+		if (nv.kind != VEC_VALUE_NUMBER) {
+			vec_value_destroy(&nv);
+			snprintf(err, errsz, "eval: series expects n in 0..64");
+			return -1;
+		}
+		double nn = vec_number_float64(nv.num);
+		vec_value_destroy(&nv);
+		if (isnan(nn) || isinf(nn) || nn != trunc_d(nn) || nn < 0 || nn > 64) {
+			snprintf(err, errsz, "eval: series expects n in 0..64");
+			return -1;
+		}
+		int nterms = (int)nn;
+
+		vec_node *series = vec_node_taylor_series(e, n->u.call.args[0], v->u.ident.name, a, nterms, err, errsz);
+		if (!series)
+			return -1;
+		*out = vec_value_expr(series);
 		return 0;
 	}
 	if (!strcmp(name, "diff") && argc == 2) {
