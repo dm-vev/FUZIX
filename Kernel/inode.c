@@ -276,8 +276,10 @@ int16_t doclose(uint_fast8_t uindex)
 	m = O_ACCMODE(oftp->o_access);
 
 	if (oftp->o_refs == 1) {
-		if (isdevice(ino))
+		if (isdevice(ino)) {
+			udata.u_offset = oftp->o_ptr;
 			d_close((int) (ino->c_node.i_addr[0]));
+		}
 		if (getmode(ino) == MODE_R(F_REG) && m)
 			flush_dev = ino->c_dev;
 #ifdef CONFIG_NET
@@ -339,10 +341,11 @@ inoptr rwsetup(bool is_read, uint_fast8_t * flag)
  *
  *	FIXME. Need so IS_TTY(dev) defines too and minor(x) etc
  */
-int dev_openi(inoptr *ino, uint16_t flag)
+int dev_openi(inoptr *ino, struct oft *ofp, uint16_t flag)
 {
         int ret;
         uint16_t da = (*ino)->c_node.i_addr[0];
+        used(ofp);
         /* Handle the special casing where we need to know about inodes */
 
         /* /dev/tty processing */

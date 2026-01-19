@@ -92,6 +92,11 @@ arg_t _open(void)
 
 	/* Book our slot in case we block opening a device */
 	of_tab[oftindex].o_inode = ino;
+	/* Initialize open file table fields early so that dev_openi() may
+	 * safely mutate them (eg clone devices) even if it blocks.
+	 */
+	of_tab[oftindex].o_ptr = 0;
+	of_tab[oftindex].o_access = flag;	/* Save the low bits only */
 
 	if (w) {
 		if (getmode(ino) == MODE_R(F_DIR)) {
@@ -116,7 +121,7 @@ arg_t _open(void)
 		   by the call to dev_openi. /dev/tty in particular does this
 		   to assign device instances */
 		i_unlock(*iptr);
-		if (dev_openi(iptr, flag) != 0)
+		if (dev_openi(iptr, &of_tab[oftindex], flag) != 0)
 			goto cantopen;
 		/* May have changed */
 		/* get the static pointer back in case it changed via dev 
@@ -135,9 +140,7 @@ arg_t _open(void)
 	}
 	/* Link our file descriptor to the of table slot */
 	udata.u_files[uindex] = oftindex;
-	/* Set up the other fields in the of table */
-	of_tab[oftindex].o_ptr = 0;
-	of_tab[oftindex].o_access = flag;	/* Save the low bits only */
+	/* Remaining fields are already initialized above. */
 
 	/* O_CLOEXEC updates the mask of file handles to close on execve()
 	   so that you can handle this atomically */

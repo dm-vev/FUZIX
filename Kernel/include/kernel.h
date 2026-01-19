@@ -1049,7 +1049,7 @@ extern uint16_t umove(uint16_t n);	/* Probably wants to move ? */
 extern void writei(inoptr ino, uint_fast8_t flag);
 extern int16_t doclose (uint_fast8_t uindex);
 extern inoptr rwsetup (bool is_read, uint_fast8_t *flag);
-extern int dev_openi(inoptr *ino, uint16_t flag);
+extern int dev_openi(inoptr *ino, struct oft *ofp, uint16_t flag);
 extern void sync(void);
 
 /* mm.c */
@@ -1320,5 +1320,4 @@ extern arg_t _ftruncate(void);    /* FUZIX system call 67 */
 #endif
 
 #endif /* __FUZIX__KERNEL_DOT_H__ */
-
 
