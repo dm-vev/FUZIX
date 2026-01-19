@@ -197,6 +197,319 @@ static double cosh_d(double x)
 	return (ex + em) * 0.5;
 }
 
+static double tan_d(double x)
+{
+	return sin(x) / cos(x);
+}
+
+static double cot_d(double x)
+{
+	return 1 / tan_d(x);
+}
+
+static double sec_d(double x)
+{
+	return 1 / cos(x);
+}
+
+static double csc_d(double x)
+{
+	return 1 / sin(x);
+}
+
+static double tanh_d(double x)
+{
+	double ex2 = exp(2 * x);
+	return (ex2 - 1) / (ex2 + 1);
+}
+
+static double asinh_d(double x)
+{
+	return log(x + sqrt(x * x + 1));
+}
+
+static double acosh_d(double x)
+{
+	return log(x + sqrt(x - 1) * sqrt(x + 1));
+}
+
+static double atanh_d(double x)
+{
+	return 0.5 * log((1 + x) / (1 - x));
+}
+
+static double sign_d(double x)
+{
+	if (isnan(x))
+		return x;
+	if (x > 0)
+		return 1;
+	if (x < 0)
+		return -1;
+	return 0;
+}
+
+static double trunc_d(double x)
+{
+	if (x < 0)
+		return ceil(x);
+	return floor(x);
+}
+
+static double round_d(double x)
+{
+	if (isnan(x) || isinf(x))
+		return x;
+	if (x < 0)
+		return ceil(x - 0.5);
+	return floor(x + 0.5);
+}
+
+static double cbrt_d(double x)
+{
+	if (x == 0 || isnan(x) || isinf(x))
+		return x;
+	if (x < 0)
+		return -pow(-x, 1.0 / 3.0);
+	return pow(x, 1.0 / 3.0);
+}
+
+static double exp2_d(double x)
+{
+	return exp(x * M_LN2);
+}
+
+static double log2_d(double x)
+{
+	return log(x) / M_LN2;
+}
+
+static double log10_d(double x)
+{
+	return log(x) / M_LN10;
+}
+
+static double expm1_d(double x)
+{
+	return exp(x) - 1;
+}
+
+static double log1p_d(double x)
+{
+	return log(1 + x);
+}
+
+static double rad_d(double x)
+{
+	return x * M_PI / 180.0;
+}
+
+static double deg_d(double x)
+{
+	return x * 180.0 / M_PI;
+}
+
+static double sq_d(double x)
+{
+	return x * x;
+}
+
+static double cube_d(double x)
+{
+	return x * x * x;
+}
+
+static double saturate_d(double x)
+{
+	if (x < 0)
+		return 0;
+	if (x > 1)
+		return 1;
+	return x;
+}
+
+typedef double (*unary_d_fn)(double);
+
+struct unary_builtin {
+	const char *name;
+	unary_d_fn fn;
+};
+
+static const struct unary_builtin unary_array_builtins[] = {
+	{"sin", sin},
+	{"cos", cos},
+	{"tan", tan_d},
+	{"asin", asin},
+	{"acos", acos},
+	{"atan", atan},
+	{"cot", cot_d},
+	{"sec", sec_d},
+	{"csc", csc_d},
+
+	{"sinh", sinh_d},
+	{"cosh", cosh_d},
+	{"tanh", tanh_d},
+	{"asinh", asinh_d},
+	{"acosh", acosh_d},
+	{"atanh", atanh_d},
+
+	{"sqrt", sqrt},
+	{"cbrt", cbrt_d},
+
+	{"abs", fabs},
+	{"sign", sign_d},
+
+	{"exp", exp},
+	{"expm1", expm1_d},
+	{"exp2", exp2_d},
+	{"ln", log},
+	{"log", log},
+	{"log10", log10_d},
+	{"log2", log2_d},
+	{"log1p", log1p_d},
+
+	{"floor", floor},
+	{"ceil", ceil},
+	{"trunc", trunc_d},
+	{"round", round_d},
+
+	{"rad", rad_d},
+	{"deg", deg_d},
+	{"saturate", saturate_d},
+	{"sq", sq_d},
+	{"cube", cube_d},
+};
+
+static unary_d_fn unary_builtin_find(const char *name)
+{
+	if (!name)
+		return NULL;
+	for (size_t i = 0; i < sizeof(unary_array_builtins) / sizeof(unary_array_builtins[0]); i++) {
+		const struct unary_builtin *b = &unary_array_builtins[i];
+		if (!strcmp(b->name, name))
+			return b->fn;
+	}
+	return NULL;
+}
+
+typedef double (*agg_d_fn)(const double *xs, size_t n);
+
+struct agg_builtin {
+	const char *name;
+	agg_d_fn fn;
+};
+
+static int dbl_cmp(const void *a, const void *b)
+{
+	double da = *(const double *)a;
+	double db = *(const double *)b;
+	return (da > db) - (da < db);
+}
+
+static double agg_len(const double *xs, size_t n)
+{
+	(void)xs;
+	return (double)n;
+}
+
+static double agg_sum(const double *xs, size_t n)
+{
+	double total = 0;
+	for (size_t i = 0; i < n; i++)
+		total += xs[i];
+	return total;
+}
+
+static double agg_avg(const double *xs, size_t n)
+{
+	if (!n)
+		return NAN;
+	return agg_sum(xs, n) / (double)n;
+}
+
+static double agg_min(const double *xs, size_t n)
+{
+	if (!n)
+		return NAN;
+	double m = xs[0];
+	for (size_t i = 1; i < n; i++)
+		if (xs[i] < m)
+			m = xs[i];
+	return m;
+}
+
+static double agg_max(const double *xs, size_t n)
+{
+	if (!n)
+		return NAN;
+	double m = xs[0];
+	for (size_t i = 1; i < n; i++)
+		if (xs[i] > m)
+			m = xs[i];
+	return m;
+}
+
+static double agg_median(const double *xs, size_t n)
+{
+	if (!n)
+		return NAN;
+	double *tmp = malloc(sizeof(tmp[0]) * n);
+	if (!tmp)
+		return NAN;
+	memcpy(tmp, xs, sizeof(tmp[0]) * n);
+	qsort(tmp, n, sizeof(tmp[0]), dbl_cmp);
+	size_t mid = n / 2;
+	double out;
+	if (n & 1)
+		out = tmp[mid];
+	else
+		out = 0.5 * (tmp[mid - 1] + tmp[mid]);
+	free(tmp);
+	return out;
+}
+
+static double agg_variance(const double *xs, size_t n)
+{
+	if (!n)
+		return NAN;
+	double mean = agg_avg(xs, n);
+	double sum = 0;
+	for (size_t i = 0; i < n; i++) {
+		double d = xs[i] - mean;
+		sum += d * d;
+	}
+	return sum / (double)n;
+}
+
+static double agg_std(const double *xs, size_t n)
+{
+	return sqrt(agg_variance(xs, n));
+}
+
+static const struct agg_builtin array_agg_builtins[] = {
+	{"len", agg_len},
+	{"sum", agg_sum},
+	{"avg", agg_avg},
+	{"mean", agg_avg},
+	{"min", agg_min},
+	{"max", agg_max},
+	{"median", agg_median},
+	{"variance", agg_variance},
+	{"std", agg_std},
+};
+
+static agg_d_fn agg_builtin_find(const char *name)
+{
+	if (!name)
+		return NULL;
+	for (size_t i = 0; i < sizeof(array_agg_builtins) / sizeof(array_agg_builtins[0]); i++) {
+		const struct agg_builtin *b = &array_agg_builtins[i];
+		if (!strcmp(b->name, name))
+			return b->fn;
+	}
+	return NULL;
+}
+
 static vec_complex c_sin(vec_complex z)
 {
 	/* sin(a+ib) = sin a cosh b + i cos a sinh b */
@@ -529,6 +842,97 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 		*out = vec_value_array(xs, 2);
 		goto done;
 	}
+	/* Array builtins. */
+	if (!strcmp(name, "range")) {
+		if (argc < 2 || argc > 3) {
+			snprintf(err, errsz, "eval: range expects 2 or 3 arguments");
+			goto fail;
+		}
+		if (args[0].kind != VEC_VALUE_NUMBER || args[1].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: range bounds must be numbers");
+			goto fail;
+		}
+		int npts = 256;
+		if (argc == 3) {
+			if (args[2].kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: range count must be a number");
+				goto fail;
+			}
+			double nf = vec_number_float64(args[2].num);
+			if (nf < 2 || nf > 4096) {
+				snprintf(err, errsz, "eval: range count must be 2..4096");
+				goto fail;
+			}
+			npts = (int)nf;
+		}
+		double a = vec_number_float64(args[0].num);
+		double b = vec_number_float64(args[1].num);
+		double *xs = malloc(sizeof(xs[0]) * (size_t)npts);
+		if (!xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		if (npts == 1) {
+			xs[0] = a;
+		} else {
+			for (int i = 0; i < npts; i++) {
+				double t = (double)i / (double)(npts - 1);
+				xs[i] = a + t * (b - a);
+			}
+		}
+		*out = vec_value_array(xs, (size_t)npts);
+		goto done;
+	}
+
+	if (!strcmp(name, "clamp") && argc == 3 && args[0].kind == VEC_VALUE_ARRAY &&
+	    args[1].kind == VEC_VALUE_NUMBER && args[2].kind == VEC_VALUE_NUMBER) {
+		double lo = vec_number_float64(args[1].num);
+		double hi = vec_number_float64(args[2].num);
+		if (lo > hi) {
+			double tmp = lo;
+			lo = hi;
+			hi = tmp;
+		}
+		size_t n = args[0].len;
+		double *xs = n ? malloc(sizeof(xs[0]) * n) : NULL;
+		if (n && !xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		for (size_t i = 0; i < n; i++) {
+			double x = args[0].arr[i];
+			if (x < lo)
+				x = lo;
+			else if (x > hi)
+				x = hi;
+			xs[i] = x;
+		}
+		*out = vec_value_array(xs, n);
+		goto done;
+	}
+
+	if (argc == 1 && args[0].kind == VEC_VALUE_ARRAY) {
+		unary_d_fn fn = unary_builtin_find(name);
+		if (fn) {
+			size_t n = args[0].len;
+			double *xs = n ? malloc(sizeof(xs[0]) * n) : NULL;
+			if (n && !xs) {
+				snprintf(err, errsz, "eval: out of memory");
+				goto fail;
+			}
+			for (size_t i = 0; i < n; i++) {
+				xs[i] = fn(args[0].arr[i]);
+			}
+			*out = vec_value_array(xs, n);
+			goto done;
+		}
+
+		agg_d_fn agg = agg_builtin_find(name);
+		if (agg) {
+			*out = vec_value_number(vec_float(agg(args[0].arr, args[0].len)));
+			goto done;
+		}
+	}
 	if (argc == 1) {
 		vec_complex z;
 		if (value_to_complex(&args[0], &z) == 0 && args[0].kind == VEC_VALUE_COMPLEX) {
@@ -575,68 +979,13 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 		}
 	}
 
-	/* Builtins (minimal subset). */
-	if (!strcmp(name, "sin") && argc == 1) {
-		if (args[0].kind != VEC_VALUE_NUMBER) {
-			snprintf(err, errsz, "eval: sin(x) expects number");
-			goto fail;
+	/* Unary scalar builtins. */
+	if (argc == 1 && args[0].kind == VEC_VALUE_NUMBER) {
+		unary_d_fn fn = unary_builtin_find(name);
+		if (fn) {
+			*out = vec_value_number(vec_float(fn(vec_number_float64(args[0].num))));
+			goto done;
 		}
-		*out = vec_value_number(vec_float(sin(vec_number_float64(args[0].num))));
-		goto done;
-	}
-	if (!strcmp(name, "cos") && argc == 1) {
-		if (args[0].kind != VEC_VALUE_NUMBER) {
-			snprintf(err, errsz, "eval: cos(x) expects number");
-			goto fail;
-		}
-		*out = vec_value_number(vec_float(cos(vec_number_float64(args[0].num))));
-		goto done;
-	}
-	if (!strcmp(name, "tan") && argc == 1) {
-		if (args[0].kind != VEC_VALUE_NUMBER) {
-			snprintf(err, errsz, "eval: tan(x) expects number");
-			goto fail;
-		}
-		double x = vec_number_float64(args[0].num);
-		double c = cos(x);
-		if (c == 0) {
-			snprintf(err, errsz, "eval: tan: division by zero");
-			goto fail;
-		}
-		*out = vec_value_number(vec_float(sin(x) / c));
-		goto done;
-	}
-	if ((!strcmp(name, "ln") || !strcmp(name, "log")) && argc == 1) {
-		if (args[0].kind != VEC_VALUE_NUMBER) {
-			snprintf(err, errsz, "eval: ln(x) expects number");
-			goto fail;
-		}
-		*out = vec_value_number(vec_float(log(vec_number_float64(args[0].num))));
-		goto done;
-	}
-	if (!strcmp(name, "exp") && argc == 1) {
-		if (args[0].kind != VEC_VALUE_NUMBER) {
-			snprintf(err, errsz, "eval: exp(x) expects number");
-			goto fail;
-		}
-		*out = vec_value_number(vec_float(exp(vec_number_float64(args[0].num))));
-		goto done;
-	}
-	if (!strcmp(name, "sqrt") && argc == 1) {
-		if (args[0].kind != VEC_VALUE_NUMBER) {
-			snprintf(err, errsz, "eval: sqrt(x) expects number");
-			goto fail;
-		}
-		*out = vec_value_number(vec_float(sqrt(vec_number_float64(args[0].num))));
-		goto done;
-	}
-	if (!strcmp(name, "abs") && argc == 1) {
-		if (args[0].kind != VEC_VALUE_NUMBER) {
-			snprintf(err, errsz, "eval: abs(x) expects number");
-			goto fail;
-		}
-		*out = vec_value_number(vec_float(fabs(vec_number_float64(args[0].num))));
-		goto done;
 	}
 	if (!strcmp(name, "min") && argc >= 1) {
 		if (args[0].kind != VEC_VALUE_NUMBER) {
@@ -834,6 +1183,58 @@ static int vec_eval_node_impl(vec_env *e, const vec_node *n, const char *ov_name
 			vec_value_destroy(&x);
 			return 0;
 		}
+		case VEC_VALUE_ARRAY:
+			switch (n->u.unary.op) {
+			case '+':
+				*out = x;
+				x = vec_value_number(vec_float(0));
+				vec_value_destroy(&x);
+				return 0;
+			case '-': {
+				size_t n = x.len;
+				double *xs = n ? malloc(sizeof(xs[0]) * n) : NULL;
+				if (n && !xs) {
+					snprintf(err, errsz, "eval: out of memory");
+					vec_value_destroy(&x);
+					return -1;
+				}
+				for (size_t i = 0; i < n; i++)
+					xs[i] = -x.arr[i];
+				*out = vec_value_array(xs, n);
+				vec_value_destroy(&x);
+				return 0;
+			}
+			default:
+				snprintf(err, errsz, "eval: unary %q", n->u.unary.op);
+				vec_value_destroy(&x);
+				return -1;
+			}
+		case VEC_VALUE_MATRIX:
+			switch (n->u.unary.op) {
+			case '+':
+				*out = x;
+				x = vec_value_number(vec_float(0));
+				vec_value_destroy(&x);
+				return 0;
+			case '-': {
+				size_t n = (size_t)x.rows * (size_t)x.cols;
+				double *m = n ? malloc(sizeof(m[0]) * n) : NULL;
+				if (n && !m) {
+					snprintf(err, errsz, "eval: out of memory");
+					vec_value_destroy(&x);
+					return -1;
+				}
+				for (size_t i = 0; i < n; i++)
+					m[i] = -x.mat[i];
+				*out = vec_value_matrix(x.rows, x.cols, m);
+				vec_value_destroy(&x);
+				return 0;
+			}
+			default:
+				snprintf(err, errsz, "eval: unary %q", n->u.unary.op);
+				vec_value_destroy(&x);
+				return -1;
+			}
 		case VEC_VALUE_NUMBER:
 			switch (n->u.unary.op) {
 			case '+':
@@ -907,6 +1308,139 @@ static int vec_eval_node_impl(vec_env *e, const vec_node *n, const char *ov_name
 				snprintf(err, errsz, "eval: binary %q", n->u.binary.op);
 				goto bin_fail;
 			}
+		}
+
+		if (a.kind == VEC_VALUE_ARRAY || b.kind == VEC_VALUE_ARRAY) {
+			const vec_value *aa = &a;
+			const vec_value *bb = &b;
+			if (aa->kind == VEC_VALUE_ARRAY && bb->kind == VEC_VALUE_ARRAY) {
+				if (aa->len != bb->len) {
+					snprintf(err, errsz, "eval: array length mismatch");
+					goto bin_fail;
+				}
+				size_t len = aa->len;
+				double *xs = len ? malloc(sizeof(xs[0]) * len) : NULL;
+				if (len && !xs) {
+					snprintf(err, errsz, "eval: out of memory");
+					goto bin_fail;
+				}
+				for (size_t i = 0; i < len; i++) {
+					vec_number r;
+					vec_number an = vec_float(aa->arr[i]);
+					vec_number bn = vec_float(bb->arr[i]);
+					switch (n->u.binary.op) {
+					case '+':
+						r = add_number(e, an, bn);
+						break;
+					case '-':
+						r = sub_number(e, an, bn);
+						break;
+					case '*':
+						r = mul_number(e, an, bn);
+						break;
+					case '/':
+						if (div_number(e, an, bn, &r, err, errsz) != 0) {
+							free(xs);
+							goto bin_fail;
+						}
+						break;
+					case '^':
+						r = pow_number(e, an, bn);
+						break;
+					default:
+						snprintf(err, errsz, "eval: unsupported array operation");
+						free(xs);
+						goto bin_fail;
+					}
+					xs[i] = vec_number_float64(r);
+				}
+				*out = vec_value_array(xs, len);
+				goto bin_ok;
+			}
+			if (aa->kind == VEC_VALUE_ARRAY && bb->kind == VEC_VALUE_NUMBER) {
+				size_t len = aa->len;
+				double *xs = len ? malloc(sizeof(xs[0]) * len) : NULL;
+				if (len && !xs) {
+					snprintf(err, errsz, "eval: out of memory");
+					goto bin_fail;
+				}
+				double bf = vec_number_float64(bb->num);
+				for (size_t i = 0; i < len; i++) {
+					vec_number r;
+					vec_number an = vec_float(aa->arr[i]);
+					vec_number bn = vec_float(bf);
+					switch (n->u.binary.op) {
+					case '+':
+						r = add_number(e, an, bn);
+						break;
+					case '-':
+						r = sub_number(e, an, bn);
+						break;
+					case '*':
+						r = mul_number(e, an, bn);
+						break;
+					case '/':
+						if (div_number(e, an, bn, &r, err, errsz) != 0) {
+							free(xs);
+							goto bin_fail;
+						}
+						break;
+					case '^':
+						r = pow_number(e, an, bn);
+						break;
+					default:
+						snprintf(err, errsz, "eval: unsupported array operation");
+						free(xs);
+						goto bin_fail;
+					}
+					xs[i] = vec_number_float64(r);
+				}
+				*out = vec_value_array(xs, len);
+				goto bin_ok;
+			}
+			if (aa->kind == VEC_VALUE_NUMBER && bb->kind == VEC_VALUE_ARRAY) {
+				size_t len = bb->len;
+				double *xs = len ? malloc(sizeof(xs[0]) * len) : NULL;
+				if (len && !xs) {
+					snprintf(err, errsz, "eval: out of memory");
+					goto bin_fail;
+				}
+				double af = vec_number_float64(aa->num);
+				for (size_t i = 0; i < len; i++) {
+					vec_number r;
+					vec_number an = vec_float(af);
+					vec_number bn = vec_float(bb->arr[i]);
+					switch (n->u.binary.op) {
+					case '+':
+						r = add_number(e, an, bn);
+						break;
+					case '-':
+						r = sub_number(e, an, bn);
+						break;
+					case '*':
+						r = mul_number(e, an, bn);
+						break;
+					case '/':
+						if (div_number(e, an, bn, &r, err, errsz) != 0) {
+							free(xs);
+							goto bin_fail;
+						}
+						break;
+					case '^':
+						r = pow_number(e, an, bn);
+						break;
+					default:
+						snprintf(err, errsz, "eval: unsupported array operation");
+						free(xs);
+						goto bin_fail;
+					}
+					xs[i] = vec_number_float64(r);
+				}
+				*out = vec_value_array(xs, len);
+				goto bin_ok;
+			}
+			snprintf(err, errsz, "eval: unsupported array operation");
+			goto bin_fail;
 		}
 
 		if (a.kind == VEC_VALUE_EXPR || b.kind == VEC_VALUE_EXPR) {
