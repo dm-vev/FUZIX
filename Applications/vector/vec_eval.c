@@ -1354,27 +1354,34 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 			snprintf(err, errsz, "eval: lerp(a, b, t)");
 			goto fail;
 		}
-		if (args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_ARRAY || args[2].kind != VEC_VALUE_NUMBER) {
-			snprintf(err, errsz, "eval: lerp(a, b, t)");
-			goto fail;
+		if (args[0].kind == VEC_VALUE_ARRAY && args[1].kind == VEC_VALUE_ARRAY && args[2].kind == VEC_VALUE_NUMBER) {
+			if (args[0].len != args[1].len) {
+				snprintf(err, errsz, "eval: array length mismatch");
+				goto fail;
+			}
+			double t = vec_number_float64(args[2].num);
+			size_t n = args[0].len;
+			double *xs = n ? malloc(sizeof(xs[0]) * n) : NULL;
+			if (n && !xs) {
+				snprintf(err, errsz, "eval: out of memory");
+				goto fail;
+			}
+			for (size_t i = 0; i < n; i++) {
+				double a0 = args[0].arr[i];
+				xs[i] = a0 + (args[1].arr[i] - a0) * t;
+			}
+			*out = vec_value_array(xs, n);
+			goto done;
 		}
-		if (args[0].len != args[1].len) {
-			snprintf(err, errsz, "eval: array length mismatch");
-			goto fail;
+		if (args[0].kind == VEC_VALUE_NUMBER && args[1].kind == VEC_VALUE_NUMBER && args[2].kind == VEC_VALUE_NUMBER) {
+			double a = vec_number_float64(args[0].num);
+			double b = vec_number_float64(args[1].num);
+			double t = vec_number_float64(args[2].num);
+			*out = vec_value_number(vec_float(a + t * (b - a)));
+			goto done;
 		}
-		double t = vec_number_float64(args[2].num);
-		size_t n = args[0].len;
-		double *xs = n ? malloc(sizeof(xs[0]) * n) : NULL;
-		if (n && !xs) {
-			snprintf(err, errsz, "eval: out of memory");
-			goto fail;
-		}
-		for (size_t i = 0; i < n; i++) {
-			double a0 = args[0].arr[i];
-			xs[i] = a0 + (args[1].arr[i] - a0) * t;
-		}
-		*out = vec_value_array(xs, n);
-		goto done;
+		snprintf(err, errsz, "eval: lerp(a, b, t)");
+		goto fail;
 	}
 
 	/* Stats builtins. */
@@ -1547,6 +1554,134 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 			*out = vec_value_number(vec_float(fn(vec_number_float64(args[0].num))));
 			goto done;
 		}
+	}
+
+	/* Scalar builtins. */
+	if (!strcmp(name, "pow") && argc == 2) {
+		if (args[0].kind != VEC_VALUE_NUMBER || args[1].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: pow(a, b) expects numbers");
+			goto fail;
+		}
+		double a = vec_number_float64(args[0].num);
+		double b = vec_number_float64(args[1].num);
+		*out = vec_value_number(vec_float(pow(a, b)));
+		goto done;
+	}
+	if (!strcmp(name, "hypot") && argc == 2) {
+		if (args[0].kind != VEC_VALUE_NUMBER || args[1].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: hypot(a, b) expects numbers");
+			goto fail;
+		}
+		double a = vec_number_float64(args[0].num);
+		double b = vec_number_float64(args[1].num);
+		*out = vec_value_number(vec_float(sqrt(a * a + b * b)));
+		goto done;
+	}
+	if (!strcmp(name, "copysign") && argc == 2) {
+		if (args[0].kind != VEC_VALUE_NUMBER || args[1].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: copysign(mag, sign)");
+			goto fail;
+		}
+		double mag = fabs(vec_number_float64(args[0].num));
+		double sign_source = vec_number_float64(args[1].num);
+		if (isnan(sign_source)) {
+			*out = vec_value_number(vec_float(NAN));
+			goto done;
+		}
+		if (sign_source < 0)
+			mag = -mag;
+		*out = vec_value_number(vec_float(mag));
+		goto done;
+	}
+	if (!strcmp(name, "mod") && argc == 2) {
+		if (args[0].kind != VEC_VALUE_NUMBER || args[1].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: mod(a, b) expects numbers");
+			goto fail;
+		}
+		double a = vec_number_float64(args[0].num);
+		double b = vec_number_float64(args[1].num);
+		if (b == 0) {
+			snprintf(err, errsz, "eval: mod: division by zero");
+			goto fail;
+		}
+		*out = vec_value_number(vec_float(a - b * floor(a / b)));
+		goto done;
+	}
+	if (!strcmp(name, "clamp") && argc == 3) {
+		if (args[0].kind != VEC_VALUE_NUMBER || args[1].kind != VEC_VALUE_NUMBER || args[2].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: clamp(x, lo, hi)");
+			goto fail;
+		}
+		double x = vec_number_float64(args[0].num);
+		double lo = vec_number_float64(args[1].num);
+		double hi = vec_number_float64(args[2].num);
+		if (lo > hi) {
+			double tmp = lo;
+			lo = hi;
+			hi = tmp;
+		}
+		if (x < lo)
+			x = lo;
+		else if (x > hi)
+			x = hi;
+		*out = vec_value_number(vec_float(x));
+		goto done;
+	}
+	if (!strcmp(name, "step") && argc == 2) {
+		if (args[0].kind != VEC_VALUE_NUMBER || args[1].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: step(edge, x)");
+			goto fail;
+		}
+		double edge = vec_number_float64(args[0].num);
+		double x = vec_number_float64(args[1].num);
+		*out = vec_value_number(vec_float(x < edge ? 0 : 1));
+		goto done;
+	}
+	if (!strcmp(name, "smoothstep") && argc == 3) {
+		if (args[0].kind != VEC_VALUE_NUMBER || args[1].kind != VEC_VALUE_NUMBER || args[2].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: smoothstep(edge0, edge1, x)");
+			goto fail;
+		}
+		double edge0 = vec_number_float64(args[0].num);
+		double edge1 = vec_number_float64(args[1].num);
+		double x = vec_number_float64(args[2].num);
+		double t;
+		if (edge0 == edge1) {
+			t = x < edge0 ? 0 : 1;
+		} else {
+			t = (x - edge0) / (edge1 - edge0);
+			if (t < 0)
+				t = 0;
+			else if (t > 1)
+				t = 1;
+			t = t * t * (3 - 2 * t);
+		}
+		*out = vec_value_number(vec_float(t));
+		goto done;
+	}
+	if (!strcmp(name, "sum") && argc >= 1) {
+		double total = 0;
+		for (size_t i = 0; i < argc; i++) {
+			if (args[i].kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: sum expects numbers");
+				goto fail;
+			}
+			total += vec_number_float64(args[i].num);
+		}
+		*out = vec_value_number(vec_float(total));
+		goto done;
+	}
+	if ((!strcmp(name, "avg") || !strcmp(name, "mean")) && argc >= 1) {
+		double total = 0;
+		for (size_t i = 0; i < argc; i++) {
+			if (args[i].kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: avg expects numbers");
+				goto fail;
+			}
+			total += vec_number_float64(args[i].num);
+		}
+		*out = vec_value_number(vec_float(total / (double)argc));
+		goto done;
 	}
 	if (!strcmp(name, "min") && argc >= 1) {
 		if (args[0].kind != VEC_VALUE_NUMBER) {
