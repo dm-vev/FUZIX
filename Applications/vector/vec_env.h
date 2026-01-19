@@ -38,6 +38,8 @@ void vec_env_destroy(vec_env *e);
 /* Returns: 0 found, 1 not found, -1 error (eg OOM). */
 int vec_env_get_var(vec_env *e, const char *name, vec_value *out);
 int vec_env_set_var(vec_env *e, const char *name, vec_value v);
+/* Returns: 0 removed, 1 not found, -1 error. */
+int vec_env_unset_var(vec_env *e, const char *name);
 
 int vec_env_set_func(vec_env *e, const char *name, const char *param, vec_node *body);
 int vec_env_get_func(vec_env *e, const char *name, const vec_userfunc **out);

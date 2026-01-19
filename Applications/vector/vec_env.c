@@ -102,6 +102,27 @@ int vec_env_set_var(vec_env *e, const char *name, vec_value v)
 	return 0;
 }
 
+int vec_env_unset_var(vec_env *e, const char *name)
+{
+	if (!e || !name)
+		return -1;
+	vec_var *prev = NULL;
+	for (vec_var *v = e->vars; v; v = v->next) {
+		if (!strcmp(v->name, name)) {
+			if (prev)
+				prev->next = v->next;
+			else
+				e->vars = v->next;
+			free(v->name);
+			vec_value_destroy(&v->value);
+			free(v);
+			return 0;
+		}
+		prev = v;
+	}
+	return 1;
+}
+
 int vec_env_set_func(vec_env *e, const char *name, const char *param, vec_node *body)
 {
 	if (!e || !name || !param || !body)
