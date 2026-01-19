@@ -773,6 +773,34 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 			vec_value v;
 			memset(err, 0, sizeof(err));
 			if (vec_eval_node(&u->env, a->expr, &v, err, sizeof(err)) != 0) {
+				if (!strncmp(err, "eval: unknown variable", 22) &&
+				    a->var_name && (!strcmp(a->var_name, "y") || !strcmp(a->var_name, "z")) &&
+				    a->expr && vec_node_has_ident(a->expr, "x")) {
+					vec_node *simp = vec_node_simplify(a->expr);
+					if (!simp) {
+						ui_append_line(u, "eval: out of memory");
+						continue;
+					}
+					vec_value ev = vec_value_expr(simp);
+					if (vec_env_set_var(&u->env, a->var_name, ev) != 0) {
+						ui_append_line(u, "eval: out of memory");
+						vec_value_destroy(&ev);
+						continue;
+					}
+					{
+						char buf[160];
+						char out[160];
+						snprintf(out, sizeof(out), "%s = %s", a->var_name,
+							 ui_format_value(u, &ev, buf, sizeof(buf)));
+						ui_append_line(u, out);
+					}
+					if (u->graph)
+						vec_node_destroy(u->graph);
+					u->graph = vec_node_clone(simp);
+					snprintf(u->graph_src, sizeof(u->graph_src), "%s", line);
+					ui_set_message(u, "plot expr captured (F2)");
+					continue;
+				}
 				ui_append_line(u, err[0] ? err : "eval error");
 				continue;
 			}
@@ -786,6 +814,20 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 				char out[128];
 				snprintf(out, sizeof(out), "%s = %s", a->var_name, ui_format_value(u, &v, buf, sizeof(buf)));
 				ui_append_line(u, out);
+			}
+			if (v.kind == VEC_VALUE_MATRIX && v.cols == 2 && a->var_name) {
+				if (u->graph)
+					vec_node_destroy(u->graph);
+				u->graph = vec_node_ident_new(a->var_name, strlen(a->var_name));
+				snprintf(u->graph_src, sizeof(u->graph_src), "%s", a->var_name);
+				ui_set_message(u, "plot series captured (F2)");
+			} else if (v.kind == VEC_VALUE_EXPR && v.expr && a->var_name && !strcmp(a->var_name, "y") &&
+				   vec_node_has_ident(v.expr, "x")) {
+				if (u->graph)
+					vec_node_destroy(u->graph);
+				u->graph = vec_node_clone(v.expr);
+				snprintf(u->graph_src, sizeof(u->graph_src), "%s", a->var_name);
+				ui_set_message(u, "plot expr captured (F2)");
 			}
 			continue;
 		}
@@ -823,11 +865,30 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 			char buf[160];
 			ui_append_line(u, ui_format_value(u, &v, buf, sizeof(buf)));
 		}
-		if (a->expr && vec_node_has_ident(a->expr, "x")) {
+		if (v.kind == VEC_VALUE_MATRIX && v.cols == 2 && a->expr) {
 			if (u->graph)
 				vec_node_destroy(u->graph);
 			u->graph = a->expr;
 			a->expr = NULL;
+			snprintf(u->graph_src, sizeof(u->graph_src), "%s", line);
+			ui_set_message(u, "plot series captured (F2)");
+		} else if (a->expr && vec_node_has_ident(a->expr, "x")) {
+			vec_node *plot = NULL;
+			if (v.kind == VEC_VALUE_EXPR && v.expr)
+				plot = v.expr;
+			else
+				plot = a->expr;
+
+			if (u->graph)
+				vec_node_destroy(u->graph);
+
+			if (plot == v.expr) {
+				u->graph = plot;
+				v.expr = NULL;
+			} else {
+				u->graph = plot;
+				a->expr = NULL;
+			}
 			snprintf(u->graph_src, sizeof(u->graph_src), "%s", line);
 		}
 		vec_value_destroy(&v);
