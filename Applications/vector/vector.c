@@ -9,6 +9,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <float.h>
 #include <fcntl.h>
 #include <math.h>
 #include <signal.h>
@@ -561,6 +562,45 @@ static void ui_plot_zoom(struct ui_state *u, double factor)
 	ui_normalize_view(u);
 }
 
+static void ui_autoscale_matrix_xy(struct ui_state *u, const vec_value *v)
+{
+	if (!u || !v || v->kind != VEC_VALUE_MATRIX || v->cols != 2 || v->rows <= 0 || !v->mat)
+		return;
+
+	double minx = DBL_MAX;
+	double maxx = -DBL_MAX;
+	double miny = DBL_MAX;
+	double maxy = -DBL_MAX;
+
+	for (int i = 0; i < v->rows; i++) {
+		double x = v->mat[i * 2 + 0];
+		double y = v->mat[i * 2 + 1];
+		if (!isfinite(x) || !isfinite(y))
+			continue;
+		if (x < minx)
+			minx = x;
+		if (x > maxx)
+			maxx = x;
+		if (y < miny)
+			miny = y;
+		if (y > maxy)
+			maxy = y;
+	}
+
+	if (minx < DBL_MAX && maxx > -DBL_MAX && minx < maxx) {
+		u->x_min = minx;
+		u->x_max = maxx;
+	}
+	if (miny < DBL_MAX && maxy > -DBL_MAX && miny < maxy) {
+		double pad = (maxy - miny) * 0.1;
+		if (pad == 0)
+			pad = 1;
+		u->y_min = miny - pad;
+		u->y_max = maxy + pad;
+	}
+	ui_normalize_view(u);
+}
+
 static void ui_handle_command(struct ui_state *u, const char *cmdline)
 {
 	if (!u || !cmdline)
@@ -673,10 +713,23 @@ static void ui_handle_command(struct ui_state *u, const char *cmdline)
 			ui_set_message(u, "autoscale: no plot");
 			return;
 		}
+		vec_value gv;
+		memset(&gv, 0, sizeof(gv));
+		char gerr[96];
+		gerr[0] = 0;
+		if (vec_eval_node(&u->env, u->graph, &gv, gerr, sizeof(gerr)) == 0) {
+			if (gv.kind == VEC_VALUE_MATRIX && gv.cols == 2) {
+				ui_autoscale_matrix_xy(u, &gv);
+				vec_value_destroy(&gv);
+				ui_set_message(u, "autoscaled");
+				return;
+			}
+			vec_value_destroy(&gv);
+		}
 		double miny = 1e300;
 		double maxy = -1e300;
-		for (int i = 0; i < 200; i++) {
-			double x = u->x_min + ((double)i / 199.0) * (u->x_max - u->x_min);
+		for (int i = 0; i < 240; i++) {
+			double x = u->x_min + ((double)i / 239.0) * (u->x_max - u->x_min);
 			vec_value v;
 			char ebuf[64];
 			memset(&v, 0, sizeof(v));
@@ -696,6 +749,8 @@ static void ui_handle_command(struct ui_state *u, const char *cmdline)
 		}
 		if (miny <= maxy && isfinite(miny) && isfinite(maxy) && miny != maxy) {
 			double pad = (maxy - miny) * 0.1;
+			if (pad == 0)
+				pad = 1;
 			u->y_min = miny - pad;
 			u->y_max = maxy + pad;
 			ui_set_message(u, "autoscaled");
@@ -821,6 +876,7 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 				u->graph = vec_node_ident_new(a->var_name, strlen(a->var_name));
 				snprintf(u->graph_src, sizeof(u->graph_src), "%s", a->var_name);
 				ui_set_message(u, "plot series captured (F2)");
+				ui_autoscale_matrix_xy(u, &v);
 			} else if (v.kind == VEC_VALUE_EXPR && v.expr && a->var_name && !strcmp(a->var_name, "y") &&
 				   vec_node_has_ident(v.expr, "x")) {
 				if (u->graph)
@@ -872,6 +928,7 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 			a->expr = NULL;
 			snprintf(u->graph_src, sizeof(u->graph_src), "%s", line);
 			ui_set_message(u, "plot series captured (F2)");
+			ui_autoscale_matrix_xy(u, &v);
 		} else if (a->expr && vec_node_has_ident(a->expr, "x")) {
 			vec_node *plot = NULL;
 			if (v.kind == VEC_VALUE_EXPR && v.expr)
