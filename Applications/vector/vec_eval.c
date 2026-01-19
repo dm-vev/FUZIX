@@ -533,6 +533,29 @@ static int vector_index(double x, size_t size, size_t *out, char *err, size_t er
 	return 0;
 }
 
+static int require_int(double x, int min, int max, int *out, const char *what, char *err, size_t errsz)
+{
+	if (!out) {
+		snprintf(err, errsz, "eval: bad args");
+		return -1;
+	}
+	if (isnan(x) || isinf(x)) {
+		snprintf(err, errsz, "eval: invalid %s %g", what ? what : "value", x);
+		return -1;
+	}
+	if (x != trunc_d(x)) {
+		snprintf(err, errsz, "eval: %s must be an integer: %g", what ? what : "value", x);
+		return -1;
+	}
+	int i = (int)x;
+	if (i < min || i > max) {
+		snprintf(err, errsz, "eval: %s must be %d..%d", what ? what : "value", min, max);
+		return -1;
+	}
+	*out = i;
+	return 0;
+}
+
 static vec_complex c_sin(vec_complex z)
 {
 	/* sin(a+ib) = sin a cosh b + i cos a sinh b */
@@ -1349,6 +1372,169 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 		for (size_t i = 0; i < n; i++) {
 			double a0 = args[0].arr[i];
 			xs[i] = a0 + (args[1].arr[i] - a0) * t;
+		}
+		*out = vec_value_array(xs, n);
+		goto done;
+	}
+
+	/* Stats builtins. */
+	if (!strcmp(name, "cov")) {
+		if (argc != 2 || args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_ARRAY) {
+			snprintf(err, errsz, "eval: cov(x, y)");
+			goto fail;
+		}
+		if (args[0].len != args[1].len) {
+			snprintf(err, errsz, "eval: cov: length mismatch");
+			goto fail;
+		}
+		size_t n = args[0].len;
+		if (!n) {
+			*out = vec_value_number(vec_float(NAN));
+			goto done;
+		}
+		double mx = agg_avg(args[0].arr, n);
+		double my = agg_avg(args[1].arr, n);
+		double sum = 0;
+		for (size_t i = 0; i < n; i++)
+			sum += (args[0].arr[i] - mx) * (args[1].arr[i] - my);
+		*out = vec_value_number(vec_float(sum / (double)n));
+		goto done;
+	}
+
+	if (!strcmp(name, "corr")) {
+		if (argc != 2 || args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_ARRAY) {
+			snprintf(err, errsz, "eval: corr(x, y)");
+			goto fail;
+		}
+		if (args[0].len != args[1].len) {
+			snprintf(err, errsz, "eval: corr: length mismatch");
+			goto fail;
+		}
+		size_t n = args[0].len;
+		if (!n) {
+			*out = vec_value_number(vec_float(NAN));
+			goto done;
+		}
+		double mx = agg_avg(args[0].arr, n);
+		double my = agg_avg(args[1].arr, n);
+		double sum = 0;
+		for (size_t i = 0; i < n; i++)
+			sum += (args[0].arr[i] - mx) * (args[1].arr[i] - my);
+		double c = sum / (double)n;
+		double sx = agg_std(args[0].arr, n);
+		double sy = agg_std(args[1].arr, n);
+		if (sx == 0 || sy == 0 || isnan(sx) || isnan(sy)) {
+			*out = vec_value_number(vec_float(NAN));
+			goto done;
+		}
+		*out = vec_value_number(vec_float(c / (sx * sy)));
+		goto done;
+	}
+
+	if (!strcmp(name, "hist")) {
+		if (argc != 2 || args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: hist(data, bins)");
+			goto fail;
+		}
+		int bins;
+		if (require_int(vec_number_float64(args[1].num), 1, 8192, &bins, "hist bins", err, errsz) != 0)
+			goto fail;
+
+		size_t ndata = args[0].len;
+		size_t outn = (size_t)bins * 2;
+		double *outm = malloc(sizeof(outm[0]) * outn);
+		if (!outm) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+
+		if (!ndata) {
+			for (int i = 0; i < bins; i++) {
+				outm[(size_t)i * 2 + 0] = (double)i;
+				outm[(size_t)i * 2 + 1] = 0;
+			}
+			*out = vec_value_matrix(bins, 2, outm);
+			goto done;
+		}
+
+		double min = args[0].arr[0];
+		double max = args[0].arr[0];
+		for (size_t i = 1; i < ndata; i++) {
+			double x = args[0].arr[i];
+			if (x < min)
+				min = x;
+			if (x > max)
+				max = x;
+		}
+		if (isnan(min) || isnan(max) || isinf(min) || isinf(max)) {
+			free(outm);
+			snprintf(err, errsz, "eval: hist: invalid data range");
+			goto fail;
+		}
+
+		if (min == max) {
+			for (int i = 0; i < bins; i++) {
+				outm[(size_t)i * 2 + 0] = min;
+				outm[(size_t)i * 2 + 1] = 0;
+			}
+			outm[1] = (double)ndata;
+			*out = vec_value_matrix(bins, 2, outm);
+			goto done;
+		}
+
+		double width = (max - min) / (double)bins;
+		double *counts = calloc((size_t)bins, sizeof(counts[0]));
+		if (!counts) {
+			free(outm);
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+
+		for (size_t k = 0; k < ndata; k++) {
+			double x = args[0].arr[k];
+			if (isnan(x) || isinf(x))
+				continue;
+			int i = (int)((x - min) / width);
+			if (i < 0)
+				i = 0;
+			else if (i >= bins)
+				i = bins - 1;
+			counts[i] += 1;
+		}
+
+		for (int i = 0; i < bins; i++) {
+			double center = min + ((double)i + 0.5) * width;
+			outm[(size_t)i * 2 + 0] = center;
+			outm[(size_t)i * 2 + 1] = counts[i];
+		}
+		free(counts);
+		*out = vec_value_matrix(bins, 2, outm);
+		goto done;
+	}
+
+	if (!strcmp(name, "convolve")) {
+		if (argc != 2 || args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_ARRAY) {
+			snprintf(err, errsz, "eval: convolve(a, b)");
+			goto fail;
+		}
+		size_t na = args[0].len;
+		size_t nb = args[1].len;
+		if (!na || !nb) {
+			*out = vec_value_array(NULL, 0);
+			goto done;
+		}
+		size_t n = na + nb - 1;
+		double *xs = malloc(sizeof(xs[0]) * n);
+		if (!xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		memset(xs, 0, sizeof(xs[0]) * n);
+		for (size_t i = 0; i < na; i++) {
+			double av = args[0].arr[i];
+			for (size_t j = 0; j < nb; j++) {
+				xs[i + j] += av * args[1].arr[j];
+			}
 		}
 		*out = vec_value_array(xs, n);
 		goto done;
