@@ -64,6 +64,8 @@ struct ui_state {
 	double x_max;
 	double y_min;
 	double y_max;
+	double zoom_in_factor;
+	double zoom_out_factor;
 
 	vec_env env;
 };
@@ -371,6 +373,69 @@ static void ui_cancel_edit(struct ui_state *u)
 	ui_set_input(u, "");
 }
 
+static void ui_normalize_view(struct ui_state *u)
+{
+	if (!u)
+		return;
+	if (!isfinite(u->x_min) || !isfinite(u->x_max) || u->x_min >= u->x_max) {
+		u->x_min = -10;
+		u->x_max = 10;
+	}
+	if (!isfinite(u->y_min) || !isfinite(u->y_max) || u->y_min >= u->y_max) {
+		u->y_min = -10;
+		u->y_max = 10;
+	}
+}
+
+static void ui_cycle_plot_zoom(struct ui_state *u)
+{
+	if (!u)
+		return;
+	if (u->zoom_in_factor >= 0.89) {
+		u->zoom_in_factor = 0.8;
+		u->zoom_out_factor = 1.25;
+	} else if (u->zoom_in_factor >= 0.79) {
+		u->zoom_in_factor = 0.5;
+		u->zoom_out_factor = 2.0;
+	} else {
+		u->zoom_in_factor = 0.9;
+		u->zoom_out_factor = 1.0 / 0.9;
+	}
+	char msg[64];
+	snprintf(msg, sizeof(msg), "zoom: in x%.2f out x%.2f", u->zoom_in_factor, u->zoom_out_factor);
+	ui_set_message(u, msg);
+}
+
+static void ui_plot_pan(struct ui_state *u, double dx_frac, double dy_frac)
+{
+	if (!u)
+		return;
+	double dx = (u->x_max - u->x_min) * dx_frac;
+	double dy = (u->y_max - u->y_min) * dy_frac;
+	u->x_min += dx;
+	u->x_max += dx;
+	u->y_min += dy;
+	u->y_max += dy;
+	ui_normalize_view(u);
+}
+
+static void ui_plot_zoom(struct ui_state *u, double factor)
+{
+	if (!u)
+		return;
+	double cx = (u->x_min + u->x_max) * 0.5;
+	double cy = (u->y_min + u->y_max) * 0.5;
+	double hx = (u->x_max - u->x_min) * 0.5 * factor;
+	double hy = (u->y_max - u->y_min) * 0.5 * factor;
+	if (hx <= 0 || hy <= 0)
+		return;
+	u->x_min = cx - hx;
+	u->x_max = cx + hx;
+	u->y_min = cy - hy;
+	u->y_max = cy + hy;
+	ui_normalize_view(u);
+}
+
 static void ui_handle_command(struct ui_state *u, const char *cmdline)
 {
 	if (!u || !cmdline)
@@ -426,6 +491,8 @@ static void ui_handle_command(struct ui_state *u, const char *cmdline)
 		u->x_max = 10;
 		u->y_min = -10;
 		u->y_max = 10;
+		u->zoom_in_factor = 0.8;
+		u->zoom_out_factor = 1.25;
 		ui_set_message(u, "view reset");
 		return;
 	}
@@ -439,6 +506,7 @@ static void ui_handle_command(struct ui_state *u, const char *cmdline)
 		}
 		u->x_min = a;
 		u->x_max = b;
+		ui_normalize_view(u);
 		ui_set_message(u, "x updated");
 		return;
 	}
@@ -452,6 +520,7 @@ static void ui_handle_command(struct ui_state *u, const char *cmdline)
 		}
 		u->y_min = a;
 		u->y_max = b;
+		ui_normalize_view(u);
 		ui_set_message(u, "y updated");
 		return;
 	}
@@ -470,6 +539,7 @@ static void ui_handle_command(struct ui_state *u, const char *cmdline)
 		u->x_max = xmax;
 		u->y_min = ymin;
 		u->y_max = ymax;
+		ui_normalize_view(u);
 		ui_set_message(u, "view updated");
 		return;
 	}
@@ -848,8 +918,8 @@ static void ui_render_help(struct ui_state *u)
 		"",
 		"plot:",
 		"  :plot EXPR   set plot expr",
-		"  arrows pan   +/- zoom",
-		"  a autoscale",
+		"  arrows pan   +/- zoom   PgUp/PgDn zoom",
+		"  z zoom step  a autoscale  c term",
 		"",
 		"stack:",
 		"  Up/Down select",
@@ -899,7 +969,7 @@ static void ui_switch_tab(struct ui_state *u, enum vec_tab tab)
 
 	switch (u->tab) {
 	case TAB_PLOT:
-		ui_set_message(u, "arrows pan | +/- zoom | PgUp/PgDn zoom | a autoscale | c term");
+		ui_set_message(u, "arrows pan | +/- zoom | PgUp/PgDn zoom | z zoom step | a autoscale | c term");
 		break;
 	case TAB_STACK:
 		u->stack_sel = 0;
@@ -1056,9 +1126,7 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 			if (u->cursor)
 				u->cursor--;
 		} else if (u->tab == TAB_PLOT) {
-			double dx = (u->x_max - u->x_min) * 0.1;
-			u->x_min -= dx;
-			u->x_max -= dx;
+			ui_plot_pan(u, -0.1, 0);
 		}
 		break;
 	case VEC_KEY_RIGHT:
@@ -1066,9 +1134,7 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 			if (u->cursor < u->input_len)
 				u->cursor++;
 		} else if (u->tab == TAB_PLOT) {
-			double dx = (u->x_max - u->x_min) * 0.1;
-			u->x_min += dx;
-			u->x_max += dx;
+			ui_plot_pan(u, 0.1, 0);
 		}
 		break;
 	case VEC_KEY_HOME:
@@ -1092,9 +1158,7 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 		else if (u->tab == TAB_STACK && u->stack_sel > 0)
 			u->stack_sel--;
 		else if (u->tab == TAB_PLOT) {
-			double dy = (u->y_max - u->y_min) * 0.1;
-			u->y_min += dy;
-			u->y_max += dy;
+			ui_plot_pan(u, 0, 0.1);
 		}
 		break;
 	case VEC_KEY_DOWN:
@@ -1106,10 +1170,16 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 				u->stack_sel++;
 		}
 		else if (u->tab == TAB_PLOT) {
-			double dy = (u->y_max - u->y_min) * 0.1;
-			u->y_min -= dy;
-			u->y_max -= dy;
+			ui_plot_pan(u, 0, -0.1);
 		}
+		break;
+	case VEC_KEY_PGUP:
+		if (u->tab == TAB_PLOT)
+			ui_plot_zoom(u, u->zoom_in_factor);
+		break;
+	case VEC_KEY_PGDN:
+		if (u->tab == TAB_PLOT)
+			ui_plot_zoom(u, u->zoom_out_factor);
 		break;
 	case VEC_KEY_RUNE:
 		if (u->tab != TAB_TERMINAL && k.r == 'q') {
@@ -1127,24 +1197,14 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 		if (u->tab == TAB_PLOT) {
 			if (k.r == 'a' || k.r == 'A') {
 				ui_handle_command(u, "autoscale");
+			} else if (k.r == 'c' || k.r == 'C') {
+				ui_switch_tab(u, TAB_TERMINAL);
+			} else if (k.r == 'z' || k.r == 'Z') {
+				ui_cycle_plot_zoom(u);
 			} else if (k.r == '+' || k.r == '=') {
-				double cx = (u->x_min + u->x_max) * 0.5;
-				double cy = (u->y_min + u->y_max) * 0.5;
-				double rx = (u->x_max - u->x_min) * 0.5 * 0.8;
-				double ry = (u->y_max - u->y_min) * 0.5 * 0.8;
-				u->x_min = cx - rx;
-				u->x_max = cx + rx;
-				u->y_min = cy - ry;
-				u->y_max = cy + ry;
+				ui_plot_zoom(u, u->zoom_in_factor);
 			} else if (k.r == '-') {
-				double cx = (u->x_min + u->x_max) * 0.5;
-				double cy = (u->y_min + u->y_max) * 0.5;
-				double rx = (u->x_max - u->x_min) * 0.5 * 1.25;
-				double ry = (u->y_max - u->y_min) * 0.5 * 1.25;
-				u->x_min = cx - rx;
-				u->x_max = cx + rx;
-				u->y_min = cy - ry;
-				u->y_max = cy + ry;
+				ui_plot_zoom(u, u->zoom_out_factor);
 			}
 		}
 		break;
@@ -1192,6 +1252,8 @@ int main(int argc, char **argv)
 	u.x_max = 10;
 	u.y_min = -10;
 	u.y_max = 10;
+	u.zoom_in_factor = 0.8;
+	u.zoom_out_factor = 1.25;
 
 	char fb_err[128];
 	if (vec_fb_open(&u.fb, fb_mode, fb_err, sizeof(fb_err)) != 0) {
