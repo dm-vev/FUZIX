@@ -173,7 +173,7 @@ static void core1_main(void)
 		if ((int64_t)(now - next_kbd_poll_us) >= 0) {
 			picocalc_kbd_poll();
 			uint32_t backoff = picocalc_i2c_backoff_us();
-			uint32_t delay = PICOCALC_KBD_POLL_US;
+			uint32_t delay = picocalc_kbd_poll_us();
 			if (backoff > delay)
 				delay = backoff;
 			next_kbd_poll_us = now + delay;
@@ -181,7 +181,7 @@ static void core1_main(void)
 		if ((int64_t)(now - next_status_poll_us) >= 0) {
 			picocalc_status_poll_once();
 			uint32_t backoff = picocalc_i2c_backoff_us();
-			uint32_t delay = PICOCALC_STATUS_POLL_US;
+			uint32_t delay = picocalc_status_poll_us();
 			if (backoff > delay)
 				delay = backoff;
 			next_status_poll_us = now + delay;

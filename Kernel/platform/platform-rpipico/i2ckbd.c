@@ -422,3 +422,23 @@ int picocalc_poll_config_set(const struct picocalc_poll_config *in)
     spin_unlock(i2c_kbd_lock, spin);
     return 0;
 }
+
+uint32_t picocalc_kbd_poll_us(void)
+{
+    if (!i2c_inited || i2c_kbd_lock == NULL)
+        return PICOCALC_KBD_POLL_US;
+    uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
+    uint32_t v = poll_cfg.kbd_poll_us ? poll_cfg.kbd_poll_us : PICOCALC_KBD_POLL_US;
+    spin_unlock(i2c_kbd_lock, spin);
+    return v;
+}
+
+uint32_t picocalc_status_poll_us(void)
+{
+    if (!i2c_inited || i2c_kbd_lock == NULL)
+        return PICOCALC_STATUS_POLL_US;
+    uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
+    uint32_t v = poll_cfg.status_poll_us ? poll_cfg.status_poll_us : PICOCALC_STATUS_POLL_US;
+    spin_unlock(i2c_kbd_lock, spin);
+    return v;
+}

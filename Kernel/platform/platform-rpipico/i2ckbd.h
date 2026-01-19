@@ -28,6 +28,8 @@ uint32_t picocalc_i2c_backoff_us(void);
 struct picocalc_poll_config;
 void picocalc_poll_config_snapshot(struct picocalc_poll_config *out);
 int picocalc_poll_config_set(const struct picocalc_poll_config *in);
+uint32_t picocalc_kbd_poll_us(void);
+uint32_t picocalc_status_poll_us(void);
 int picocalc_set_kbd_backlight(uint8_t level);
 int picocalc_poweroff(uint8_t seconds);
 int picocalc_reset_kbd(uint8_t seconds);
