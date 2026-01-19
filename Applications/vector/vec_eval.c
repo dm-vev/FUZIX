@@ -510,6 +510,29 @@ static agg_d_fn agg_builtin_find(const char *name)
 	return NULL;
 }
 
+static int vector_index(double x, size_t size, size_t *out, char *err, size_t errsz)
+{
+	if (!out) {
+		snprintf(err, errsz, "eval: bad index args");
+		return -1;
+	}
+	if (isnan(x) || isinf(x)) {
+		snprintf(err, errsz, "eval: invalid index %g", x);
+		return -1;
+	}
+	if (x != trunc_d(x)) {
+		snprintf(err, errsz, "eval: index must be an integer: %g", x);
+		return -1;
+	}
+	int i = (int)x;
+	if (i < 1 || (size_t)i > size) {
+		snprintf(err, errsz, "eval: index out of range: %d", i);
+		return -1;
+	}
+	*out = (size_t)(i - 1);
+	return 0;
+}
+
 static vec_complex c_sin(vec_complex z)
 {
 	/* sin(a+ib) = sin a cosh b + i cos a sinh b */
@@ -973,6 +996,362 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 				goto done;
 			}
 		}
+	}
+
+	/* Vector builtins (Array helpers). */
+	if (!strcmp(name, "get")) {
+		if (argc != 2) {
+			snprintf(err, errsz, "eval: get(v, i)");
+			goto fail;
+		}
+		if (args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: get(v, i)");
+			goto fail;
+		}
+		size_t idx;
+		if (vector_index(vec_number_float64(args[1].num), args[0].len, &idx, err, errsz) != 0)
+			goto fail;
+		*out = vec_value_number(vec_float(args[0].arr[idx]));
+		goto done;
+	}
+	if (!strcmp(name, "set")) {
+		if (argc != 3) {
+			snprintf(err, errsz, "eval: set(v, i, value)");
+			goto fail;
+		}
+		if (args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_NUMBER || args[2].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: set(v, i, value)");
+			goto fail;
+		}
+		size_t idx;
+		if (vector_index(vec_number_float64(args[1].num), args[0].len, &idx, err, errsz) != 0)
+			goto fail;
+		size_t n = args[0].len;
+		double *xs = n ? malloc(sizeof(xs[0]) * n) : NULL;
+		if (n && !xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		memcpy(xs, args[0].arr, sizeof(xs[0]) * n);
+		xs[idx] = vec_number_float64(args[2].num);
+		*out = vec_value_array(xs, n);
+		goto done;
+	}
+
+	if ((!strcmp(name, "x") || !strcmp(name, "y") || !strcmp(name, "z") || !strcmp(name, "w")) && argc == 1) {
+		if (args[0].kind != VEC_VALUE_ARRAY) {
+			snprintf(err, errsz, "eval: %s(v)", name);
+			goto fail;
+		}
+		size_t idx = 0;
+		if (!strcmp(name, "y"))
+			idx = 1;
+		else if (!strcmp(name, "z"))
+			idx = 2;
+		else if (!strcmp(name, "w"))
+			idx = 3;
+		if (idx >= args[0].len) {
+			snprintf(err, errsz, "eval: %s expects vector length >= %lu", name, (unsigned long)(idx + 1));
+			goto fail;
+		}
+		*out = vec_value_number(vec_float(args[0].arr[idx]));
+		goto done;
+	}
+
+	if (!strcmp(name, "vec2")) {
+		if (argc != 2 || args[0].kind != VEC_VALUE_NUMBER || args[1].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: vec2(x, y)");
+			goto fail;
+		}
+		double *xs = malloc(sizeof(xs[0]) * 2);
+		if (!xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		xs[0] = vec_number_float64(args[0].num);
+		xs[1] = vec_number_float64(args[1].num);
+		*out = vec_value_array(xs, 2);
+		goto done;
+	}
+	if (!strcmp(name, "vec3")) {
+		if (argc != 3 || args[0].kind != VEC_VALUE_NUMBER || args[1].kind != VEC_VALUE_NUMBER ||
+		    args[2].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: vec3(x, y, z)");
+			goto fail;
+		}
+		double *xs = malloc(sizeof(xs[0]) * 3);
+		if (!xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		xs[0] = vec_number_float64(args[0].num);
+		xs[1] = vec_number_float64(args[1].num);
+		xs[2] = vec_number_float64(args[2].num);
+		*out = vec_value_array(xs, 3);
+		goto done;
+	}
+	if (!strcmp(name, "vec4")) {
+		if (argc != 4 || args[0].kind != VEC_VALUE_NUMBER || args[1].kind != VEC_VALUE_NUMBER ||
+		    args[2].kind != VEC_VALUE_NUMBER || args[3].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: vec4(x, y, z, w)");
+			goto fail;
+		}
+		double *xs = malloc(sizeof(xs[0]) * 4);
+		if (!xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		xs[0] = vec_number_float64(args[0].num);
+		xs[1] = vec_number_float64(args[1].num);
+		xs[2] = vec_number_float64(args[2].num);
+		xs[3] = vec_number_float64(args[3].num);
+		*out = vec_value_array(xs, 4);
+		goto done;
+	}
+
+	if (!strcmp(name, "dot")) {
+		if (argc != 2) {
+			snprintf(err, errsz, "eval: dot(a, b)");
+			goto fail;
+		}
+		if (args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_ARRAY) {
+			snprintf(err, errsz, "eval: dot(a, b)");
+			goto fail;
+		}
+		if (args[0].len != args[1].len) {
+			snprintf(err, errsz, "eval: array length mismatch");
+			goto fail;
+		}
+		double sum = 0;
+		for (size_t i = 0; i < args[0].len; i++)
+			sum += args[0].arr[i] * args[1].arr[i];
+		*out = vec_value_number(vec_float(sum));
+		goto done;
+	}
+	if (!strcmp(name, "cross")) {
+		if (argc != 2) {
+			snprintf(err, errsz, "eval: cross(a, b)");
+			goto fail;
+		}
+		if (args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_ARRAY) {
+			snprintf(err, errsz, "eval: cross(a, b)");
+			goto fail;
+		}
+		if (args[0].len != 3 || args[1].len != 3) {
+			snprintf(err, errsz, "eval: cross expects 3D vectors");
+			goto fail;
+		}
+		double *xs = malloc(sizeof(xs[0]) * 3);
+		if (!xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		const double *a3 = args[0].arr;
+		const double *b3 = args[1].arr;
+		xs[0] = a3[1] * b3[2] - a3[2] * b3[1];
+		xs[1] = a3[2] * b3[0] - a3[0] * b3[2];
+		xs[2] = a3[0] * b3[1] - a3[1] * b3[0];
+		*out = vec_value_array(xs, 3);
+		goto done;
+	}
+
+	if (!strcmp(name, "norm") || !strcmp(name, "mag")) {
+		if (argc != 1) {
+			snprintf(err, errsz, "eval: norm(v)");
+			goto fail;
+		}
+		if (args[0].kind != VEC_VALUE_ARRAY) {
+			snprintf(err, errsz, "eval: norm(v)");
+			goto fail;
+		}
+		double ss = 0;
+		for (size_t i = 0; i < args[0].len; i++)
+			ss += args[0].arr[i] * args[0].arr[i];
+		*out = vec_value_number(vec_float(sqrt(ss)));
+		goto done;
+	}
+
+	if (!strcmp(name, "unit") || !strcmp(name, "normalize")) {
+		if (argc != 1) {
+			snprintf(err, errsz, "eval: unit(v)");
+			goto fail;
+		}
+		if (args[0].kind != VEC_VALUE_ARRAY) {
+			snprintf(err, errsz, "eval: unit(v)");
+			goto fail;
+		}
+		double ss = 0;
+		for (size_t i = 0; i < args[0].len; i++)
+			ss += args[0].arr[i] * args[0].arr[i];
+		if (ss == 0) {
+			snprintf(err, errsz, "eval: zero-length vector");
+			goto fail;
+		}
+		double inv = 1.0 / sqrt(ss);
+		size_t n = args[0].len;
+		double *xs = n ? malloc(sizeof(xs[0]) * n) : NULL;
+		if (n && !xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		for (size_t i = 0; i < n; i++)
+			xs[i] = args[0].arr[i] * inv;
+		*out = vec_value_array(xs, n);
+		goto done;
+	}
+
+	if (!strcmp(name, "dist")) {
+		if (argc != 2) {
+			snprintf(err, errsz, "eval: dist(a, b)");
+			goto fail;
+		}
+		if (args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_ARRAY) {
+			snprintf(err, errsz, "eval: dist(a, b)");
+			goto fail;
+		}
+		if (args[0].len != args[1].len) {
+			snprintf(err, errsz, "eval: array length mismatch");
+			goto fail;
+		}
+		double ss = 0;
+		for (size_t i = 0; i < args[0].len; i++) {
+			double d = args[0].arr[i] - args[1].arr[i];
+			ss += d * d;
+		}
+		*out = vec_value_number(vec_float(sqrt(ss)));
+		goto done;
+	}
+
+	if (!strcmp(name, "angle")) {
+		if (argc != 2) {
+			snprintf(err, errsz, "eval: angle(a, b)");
+			goto fail;
+		}
+		if (args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_ARRAY) {
+			snprintf(err, errsz, "eval: angle(a, b)");
+			goto fail;
+		}
+		if (args[0].len != args[1].len) {
+			snprintf(err, errsz, "eval: array length mismatch");
+			goto fail;
+		}
+		double dot = 0;
+		double aa = 0;
+		double bb = 0;
+		for (size_t i = 0; i < args[0].len; i++) {
+			double av = args[0].arr[i];
+			double bv = args[1].arr[i];
+			dot += av * bv;
+			aa += av * av;
+			bb += bv * bv;
+		}
+		if (aa == 0 || bb == 0) {
+			snprintf(err, errsz, "eval: angle undefined for zero vector");
+			goto fail;
+		}
+		double c = dot / sqrt(aa * bb);
+		if (c < -1)
+			c = -1;
+		if (c > 1)
+			c = 1;
+		*out = vec_value_number(vec_float(acos(c)));
+		goto done;
+	}
+
+	if (!strcmp(name, "proj")) {
+		if (argc != 2) {
+			snprintf(err, errsz, "eval: proj(a, b)");
+			goto fail;
+		}
+		if (args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_ARRAY) {
+			snprintf(err, errsz, "eval: proj(a, b)");
+			goto fail;
+		}
+		if (args[0].len != args[1].len) {
+			snprintf(err, errsz, "eval: array length mismatch");
+			goto fail;
+		}
+		double dot = 0;
+		double bb = 0;
+		for (size_t i = 0; i < args[0].len; i++) {
+			double av = args[0].arr[i];
+			double bv = args[1].arr[i];
+			dot += av * bv;
+			bb += bv * bv;
+		}
+		if (bb == 0) {
+			snprintf(err, errsz, "eval: projection onto zero vector");
+			goto fail;
+		}
+		double k = dot / bb;
+		size_t n = args[1].len;
+		double *xs = n ? malloc(sizeof(xs[0]) * n) : NULL;
+		if (n && !xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		for (size_t i = 0; i < n; i++)
+			xs[i] = args[1].arr[i] * k;
+		*out = vec_value_array(xs, n);
+		goto done;
+	}
+
+	if (!strcmp(name, "outer")) {
+		if (argc != 2) {
+			snprintf(err, errsz, "eval: outer(a, b)");
+			goto fail;
+		}
+		if (args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_ARRAY) {
+			snprintf(err, errsz, "eval: outer(a, b)");
+			goto fail;
+		}
+		int r = (int)args[0].len;
+		int c = (int)args[1].len;
+		if (r <= 0 || c <= 0) {
+			snprintf(err, errsz, "eval: outer expects non-empty vectors");
+			goto fail;
+		}
+		size_t n = (size_t)r * (size_t)c;
+		double *m = malloc(sizeof(m[0]) * n);
+		if (!m) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		for (int i = 0; i < r; i++) {
+			for (int j = 0; j < c; j++) {
+				m[(size_t)i * (size_t)c + (size_t)j] = args[0].arr[i] * args[1].arr[j];
+			}
+		}
+		*out = vec_value_matrix(r, c, m);
+		goto done;
+	}
+
+	if (!strcmp(name, "lerp")) {
+		if (argc != 3) {
+			snprintf(err, errsz, "eval: lerp(a, b, t)");
+			goto fail;
+		}
+		if (args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_ARRAY || args[2].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: lerp(a, b, t)");
+			goto fail;
+		}
+		if (args[0].len != args[1].len) {
+			snprintf(err, errsz, "eval: array length mismatch");
+			goto fail;
+		}
+		double t = vec_number_float64(args[2].num);
+		size_t n = args[0].len;
+		double *xs = n ? malloc(sizeof(xs[0]) * n) : NULL;
+		if (n && !xs) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		for (size_t i = 0; i < n; i++) {
+			double a0 = args[0].arr[i];
+			xs[i] = a0 + (args[1].arr[i] - a0) * t;
+		}
+		*out = vec_value_array(xs, n);
+		goto done;
 	}
 
 	/* Unary scalar builtins. */
