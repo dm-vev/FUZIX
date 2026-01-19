@@ -12,6 +12,7 @@ static void usage(void)
     puts("\tflash\tReset into flash mode.");
     puts("\tstatus\tShow PicoCalc status.");
     puts("\tbacklight <0-100>\tSet LCD backlight.");
+    puts("\ti2cstats\tShow PicoCalc I2C stats.");
 }
 
 int main(int argc, char **argv)
@@ -80,6 +81,23 @@ int main(int argc, char **argv)
             close(fd);
             exit(1);
         }
+    } else if (strcmp(argv[1], "i2cstats") == 0) {
+        struct picocalc_i2c_stats st;
+        if (ioctl(fd, PICOIOC_GET_I2C_STATS, &st) != 0) {
+            perror("Failed to read i2c stats");
+            close(fd);
+            exit(1);
+        }
+        printf("fifo: reads=%lu errors=%lu\n",
+               (unsigned long)st.fifo_reads, (unsigned long)st.fifo_errors);
+        printf("reg:  reads=%lu errors=%lu\n",
+               (unsigned long)st.reg_reads, (unsigned long)st.reg_errors);
+        printf("wr:   writes=%lu errors=%lu\n",
+               (unsigned long)st.writes, (unsigned long)st.write_errors);
+        printf("backoff_us=%lu last_ok_ms=%lu last_err_ms=%lu\n",
+               (unsigned long)st.backoff_us,
+               (unsigned long)st.last_ok_ms,
+               (unsigned long)st.last_err_ms);
     } else {
         usage();
         close(fd);
