@@ -11,6 +11,7 @@ static void usage(void)
     puts("Command list:");
     puts("\tflash\tReset into flash mode.");
     puts("\tstatus\tShow PicoCalc status.");
+    puts("\tbacklight <0-100>\tSet LCD backlight.");
 }
 
 int main(int argc, char **argv)
@@ -61,6 +62,24 @@ int main(int argc, char **argv)
             printf("LCD backlight: %u/255\n", st.lcd_backlight);
         if (st.kbd_backlight != 0xFF)
             printf("KBD backlight: %u/255\n", st.kbd_backlight);
+    } else if (strcmp(argv[1], "backlight") == 0) {
+        if (argc < 3) {
+            usage();
+            close(fd);
+            exit(1);
+        }
+        long pct = strtol(argv[2], NULL, 10);
+        if (pct < 0 || pct > 100) {
+            fprintf(stderr, "backlight: expected 0-100\n");
+            close(fd);
+            exit(1);
+        }
+        uint8_t v = (uint8_t)pct;
+        if (ioctl(fd, PICOIOC_SET_LCD_BACKLIGHT, &v) != 0) {
+            perror("Failed to set backlight");
+            close(fd);
+            exit(1);
+        }
     } else {
         usage();
         close(fd);
