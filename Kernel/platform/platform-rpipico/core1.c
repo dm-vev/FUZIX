@@ -171,12 +171,20 @@ static void core1_main(void)
 
 		uint64_t now = time_us_64();
 		if ((int64_t)(now - next_kbd_poll_us) >= 0) {
-			next_kbd_poll_us = now + 5000;
 			picocalc_kbd_poll();
+			uint32_t backoff = picocalc_i2c_backoff_us();
+			uint32_t delay = PICOCALC_KBD_POLL_US;
+			if (backoff > delay)
+				delay = backoff;
+			next_kbd_poll_us = now + delay;
 		}
 		if ((int64_t)(now - next_status_poll_us) >= 0) {
-			next_status_poll_us = now + 250000;
 			picocalc_status_poll_once();
+			uint32_t backoff = picocalc_i2c_backoff_us();
+			uint32_t delay = PICOCALC_STATUS_POLL_US;
+			if (backoff > delay)
+				delay = backoff;
+			next_status_poll_us = now + delay;
 		}
 	}
 }
