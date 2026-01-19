@@ -139,6 +139,23 @@ static vec_complex c_conj(vec_complex z)
 	return z;
 }
 
+static vec_complex poly_eval_complex(const double *coeffs, size_t len, vec_complex z)
+{
+	vec_complex out;
+	out.re = 0;
+	out.im = 0;
+	if (!coeffs || len == 0)
+		return out;
+	out.re = coeffs[len - 1];
+	for (size_t i = len - 1; i > 0; i--) {
+		vec_complex c;
+		c.re = coeffs[i - 1];
+		c.im = 0;
+		out = c_add(c_mul(out, z), c);
+	}
+	return out;
+}
+
 static vec_complex c_exp(vec_complex z)
 {
 	double ea = exp(z.re);
@@ -1496,10 +1513,252 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 			goto done;
 		}
 
-		/* Complex helpers. */
-		if (!strcmp(name, "rect") && argc == 2 && args[0].kind == VEC_VALUE_NUMBER && args[1].kind == VEC_VALUE_NUMBER) {
-			double r = vec_number_float64(args[0].num);
-			double phi = vec_number_float64(args[1].num);
+		/* Polynomial builtins. */
+		if (!strcmp(name, "polyval")) {
+			if (argc != 2 || args[0].kind != VEC_VALUE_ARRAY) {
+				snprintf(err, errsz, "eval: polyval(coeffs, x)");
+				goto fail;
+			}
+			char pbuf[96];
+			pbuf[0] = 0;
+			vec_poly p = {0};
+			if (vec_poly_from_coeffs(args[0].arr, args[0].len, &p, pbuf, sizeof(pbuf)) != 0) {
+				snprintf(err, errsz, "eval: polyval: %s", pbuf[0] ? pbuf : "out of memory");
+				goto fail;
+			}
+			if (args[1].kind == VEC_VALUE_NUMBER) {
+				double x = vec_number_float64(args[1].num);
+				double y = vec_poly_eval(&p, x);
+				vec_poly_destroy(&p);
+				*out = vec_value_number(vec_float(y));
+				goto done;
+			}
+			if (args[1].kind == VEC_VALUE_COMPLEX) {
+				vec_complex y = poly_eval_complex(p.coeffs, p.len, args[1].c);
+				vec_poly_destroy(&p);
+				*out = vec_value_complex(y.re, y.im);
+				goto done;
+			}
+			vec_poly_destroy(&p);
+			snprintf(err, errsz, "eval: polyval expects numeric x");
+			goto fail;
+		}
+
+		if (!strcmp(name, "polyfit")) {
+			if (argc != 2 && argc != 3) {
+				snprintf(err, errsz, "eval: polyfit(data, n) or polyfit(x, y, n)");
+				goto fail;
+			}
+
+			const double *xs = NULL;
+			const double *ys = NULL;
+			size_t npts = 0;
+			const vec_value *deg_v = NULL;
+
+			if (argc == 2) {
+				if (args[0].kind != VEC_VALUE_MATRIX || args[0].cols != 2) {
+					snprintf(err, errsz, "eval: polyfit expects Nx2 matrix");
+					goto fail;
+				}
+				npts = (size_t)args[0].rows;
+				deg_v = &args[1];
+			} else {
+				if (args[0].kind != VEC_VALUE_ARRAY || args[1].kind != VEC_VALUE_ARRAY) {
+					snprintf(err, errsz, "eval: polyfit expects x and y as arrays");
+					goto fail;
+				}
+				if (args[0].len != args[1].len) {
+					snprintf(err, errsz, "eval: polyfit x/y length mismatch");
+					goto fail;
+				}
+				xs = args[0].arr;
+				ys = args[1].arr;
+				npts = args[0].len;
+				deg_v = &args[2];
+			}
+
+			if (!deg_v || deg_v->kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: polyfit degree must be 0..32");
+				goto fail;
+			}
+			double degf = vec_number_float64(deg_v->num);
+			if (isnan(degf) || isinf(degf) || degf != trunc_d(degf) || degf < 0 || degf > 32) {
+				snprintf(err, errsz, "eval: polyfit degree must be 0..32");
+				goto fail;
+			}
+			if (npts == 0) {
+				snprintf(err, errsz, "eval: polyfit: empty data");
+				goto fail;
+			}
+
+			int deg = (int)degf;
+			int m = deg + 1;
+			size_t mm = (size_t)m * (size_t)m;
+			double *ata = calloc(mm, sizeof(ata[0]));
+			double *atb = calloc((size_t)m, sizeof(atb[0]));
+			if (!ata || !atb) {
+				free(ata);
+				free(atb);
+				snprintf(err, errsz, "eval: out of memory");
+				goto fail;
+			}
+
+			double pows[33];
+			for (size_t i = 0; i < npts; i++) {
+				double x, y;
+				if (argc == 2) {
+					x = args[0].mat[i * 2 + 0];
+					y = args[0].mat[i * 2 + 1];
+				} else {
+					x = xs[i];
+					y = ys[i];
+				}
+				if (isnan(x) || isnan(y) || isinf(x) || isinf(y))
+					continue;
+				pows[0] = 1;
+				for (int j = 1; j < m; j++)
+					pows[j] = pows[j - 1] * x;
+				for (int r = 0; r < m; r++) {
+					atb[r] += pows[r] * y;
+					for (int c = 0; c < m; c++)
+						ata[(size_t)r * (size_t)m + (size_t)c] += pows[r] * pows[c];
+				}
+			}
+
+			double *coeffs = NULL;
+			vec_mat_err prc = vec_solve_linear_system(ata, atb, m, &coeffs);
+			free(ata);
+			free(atb);
+			if (prc == VEC_MAT_ERR_NOMEM) {
+				snprintf(err, errsz, "eval: out of memory");
+				goto fail;
+			}
+			if (prc != VEC_MAT_OK) {
+				snprintf(err, errsz, "eval: polyfit: singular system");
+				goto fail;
+			}
+			*out = vec_value_array(coeffs, (size_t)m);
+			goto done;
+		}
+
+		if (!strcmp(name, "roots") && argc == 1 && args[0].kind == VEC_VALUE_ARRAY) {
+			char pbuf[96];
+			pbuf[0] = 0;
+			vec_poly p = {0};
+			if (vec_poly_from_coeffs(args[0].arr, args[0].len, &p, pbuf, sizeof(pbuf)) != 0) {
+				snprintf(err, errsz, "eval: roots: %s", pbuf[0] ? pbuf : "out of memory");
+				goto fail;
+			}
+			int deg = vec_poly_degree(&p);
+			if (deg <= 0) {
+				vec_poly_destroy(&p);
+				snprintf(err, errsz, "eval: roots: degree must be >= 1");
+				goto fail;
+			}
+			double cn = p.coeffs[(size_t)deg];
+			if (cn == 0) {
+				vec_poly_destroy(&p);
+				snprintf(err, errsz, "eval: roots: leading coefficient is zero");
+				goto fail;
+			}
+
+			double *coeffs = malloc(sizeof(coeffs[0]) * (size_t)(deg + 1));
+			if (!coeffs) {
+				vec_poly_destroy(&p);
+				snprintf(err, errsz, "eval: out of memory");
+				goto fail;
+			}
+			for (int i = 0; i <= deg; i++)
+				coeffs[i] = p.coeffs[i] / cn;
+			vec_poly_destroy(&p);
+
+			if (deg == 1) {
+				double *outm = malloc(sizeof(outm[0]) * 2);
+				if (!outm) {
+					free(coeffs);
+					snprintf(err, errsz, "eval: out of memory");
+					goto fail;
+				}
+				outm[0] = -coeffs[0];
+				outm[1] = 0;
+				free(coeffs);
+				*out = vec_value_matrix(1, 2, outm);
+				goto done;
+			}
+
+			double max_abs = 0;
+			for (int i = 0; i < deg; i++) {
+				double v = fabs(coeffs[i]);
+				if (v > max_abs)
+					max_abs = v;
+			}
+			double radius = 1 + max_abs;
+
+			vec_complex *roots = malloc(sizeof(roots[0]) * (size_t)deg);
+			if (!roots) {
+				free(coeffs);
+				snprintf(err, errsz, "eval: out of memory");
+				goto fail;
+			}
+			for (int k = 0; k < deg; k++) {
+				double theta = 2 * M_PI * (double)k / (double)deg;
+				roots[k].re = radius * cos(theta);
+				roots[k].im = radius * sin(theta);
+			}
+
+			const double tol = 1e-12;
+			const int max_iter = 256;
+			for (int iter = 0; iter < max_iter; iter++) {
+				double max_delta = 0;
+				for (int i = 0; i < deg; i++) {
+					vec_complex zi = roots[i];
+					vec_complex den;
+					den.re = 1;
+					den.im = 0;
+					for (int j = 0; j < deg; j++) {
+						if (i == j)
+							continue;
+						vec_complex d = c_sub(zi, roots[j]);
+						if (c_is_zero(d)) {
+							d.re = 1e-9;
+							d.im = 1e-9;
+						}
+						den = c_mul(den, d);
+					}
+					if (c_is_zero(den))
+						continue;
+					vec_complex pz = poly_eval_complex(coeffs, (size_t)(deg + 1), zi);
+					vec_complex dz = c_div(pz, den);
+					roots[i] = c_sub(zi, dz);
+					double dabs = c_abs(dz);
+					if (dabs > max_delta)
+						max_delta = dabs;
+				}
+				if (max_delta <= tol)
+					break;
+			}
+
+			double *outm = malloc(sizeof(outm[0]) * (size_t)deg * 2);
+			if (!outm) {
+				free(coeffs);
+				free(roots);
+				snprintf(err, errsz, "eval: out of memory");
+				goto fail;
+			}
+			for (int i = 0; i < deg; i++) {
+				outm[i * 2 + 0] = roots[i].re;
+				outm[i * 2 + 1] = roots[i].im;
+			}
+			free(coeffs);
+			free(roots);
+			*out = vec_value_matrix(deg, 2, outm);
+			goto done;
+		}
+
+			/* Complex helpers. */
+			if (!strcmp(name, "rect") && argc == 2 && args[0].kind == VEC_VALUE_NUMBER && args[1].kind == VEC_VALUE_NUMBER) {
+				double r = vec_number_float64(args[0].num);
+				double phi = vec_number_float64(args[1].num);
 		*out = vec_value_complex(r * cos(phi), r * sin(phi));
 		goto done;
 	}
