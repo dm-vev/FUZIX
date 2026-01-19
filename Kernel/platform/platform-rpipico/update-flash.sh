@@ -10,6 +10,7 @@ rm -f ${IMG}
 ../../../Standalone/ucp ${IMG} <<EOF
 cd /
 mkdir bin
+mkdir sbin
 mkdir dev
 mkdir etc
 mkdir mnt
@@ -19,6 +20,7 @@ mkdir usr
 mkdir var
 chmod 0755 /
 chmod 0755 bin
+chmod 0755 sbin
 chmod 0755 dev
 chmod 0755 etc
 chmod 01777 tmp
@@ -94,6 +96,8 @@ mknod sys   20644 1030
 mknod net   20666 1089
 mknod i2c   20600 1031
 mknod gpio  20600 1032
+mknod audio0 20666 1280
+mknod audio  20666 1536
 
 cd /
 bget ../../../Applications/util/init init
@@ -137,6 +141,10 @@ chmod 0644 resolv.conf
 chmod 0755 rc
 chmod 0755 rc.halt
 chmod 0755 rc.reboot
+
+cd /sbin
+bget ../../../Applications/audio/audio-mixerd
+chmod 0755 audio-mixerd
 
 cd /bin
 bget ../../../Applications/util/banner
@@ -228,6 +236,8 @@ bget ../../../Applications/util/whoami
 bget ../../../Applications/util/write
 bget ../../../Applications/util/xargs
 bget ../../../Applications/util/yes
+bget ../../../Applications/audio/beep
+bget ../../../Applications/audio/wavplay
 bget utils/picoctl
 
 chmod 0755 banner
@@ -318,6 +328,8 @@ chmod 0755 whoami
 chmod 0755 write
 chmod 0755 xargs
 chmod 0755 yes
+chmod 0755 beep
+chmod 0755 wavplay
 chmod 0755 picoctl
 ln cp mv
 ln cp ln

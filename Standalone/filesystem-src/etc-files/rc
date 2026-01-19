@@ -7,3 +7,7 @@ prtroot >/etc/mtab
 #fsck -a
 #mount -a
 >/var/run/utmp
+
+if [ -x /sbin/audio-mixerd ] && [ -c /dev/audio ] && [ -c /dev/audio0 ]; then
+	/sbin/audio-mixerd </dev/null >/dev/null 2>&1 &
+fi
