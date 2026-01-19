@@ -5,6 +5,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void put_px(uint8_t **dst, struct vec_color c)
@@ -23,6 +24,56 @@ static int clamp_int(int v, int lo, int hi)
 	if (v > hi)
 		return hi;
 	return v;
+}
+
+static void mask_set(uint8_t *mask, size_t bit)
+{
+	mask[bit >> 3] |= (uint8_t)(1u << (bit & 7));
+}
+
+static int mask_get(const uint8_t *mask, size_t bit)
+{
+	return (mask[bit >> 3] & (uint8_t)(1u << (bit & 7))) != 0;
+}
+
+static void mask_draw_line(uint8_t *mask, int w, int h, int x0, int y0, int x1, int y1)
+{
+	int dx = abs(x1 - x0);
+	int sx = (x0 < x1) ? 1 : -1;
+	int dy = -abs(y1 - y0);
+	int sy = (y0 < y1) ? 1 : -1;
+	int err = dx + dy;
+	for (;;) {
+		if (x0 >= 0 && x0 < w && y0 >= 0 && y0 < h) {
+			mask_set(mask, (size_t)y0 * (size_t)w + (size_t)x0);
+		}
+		if (x0 == x1 && y0 == y1)
+			break;
+		int e2 = err * 2;
+		if (e2 >= dy) {
+			err += dy;
+			x0 += sx;
+		}
+		if (e2 <= dx) {
+			err += dx;
+			y0 += sy;
+		}
+	}
+}
+
+static int map_x(double x, double x_min, double x_max, int w)
+{
+	double t = (x - x_min) / (x_max - x_min);
+	int px = (int)lround(t * (double)(w - 1));
+	return clamp_int(px, 0, w - 1);
+}
+
+static int map_y(double y, double y_min, double y_max, int h)
+{
+	double t = (y - y_min) / (y_max - y_min);
+	int yp = (int)lround(t * (double)(h - 1));
+	int py = (h - 1) - yp;
+	return clamp_int(py, 0, h - 1);
 }
 
 int vec_plot_render(struct vec_fb *fb, int x0, int y0, int w, int h,
@@ -72,43 +123,86 @@ int vec_plot_render(struct vec_fb *fb, int x0, int y0, int w, int h,
 		yhi[i] = -1;
 	}
 
+	uint8_t *mask = NULL;
+	int use_mask = 0;
+	vec_value mv;
+	memset(&mv, 0, sizeof(mv));
+
 	if (expr) {
-		int prev_valid = 0;
-		int prev_y = 0;
-		for (int px = 0; px < w; px++) {
-			double x = x_min + ((double)px / (double)(w - 1)) * (x_max - x_min);
-			vec_value v;
-			memset(&v, 0, sizeof(v));
-			char ebuf[96];
-			ebuf[0] = 0;
-			if (vec_eval_node_override(env, expr, "x", vec_value_number(vec_float(x)), &v, ebuf, sizeof(ebuf)) != 0) {
-				prev_valid = 0;
-				continue;
+		char ebuf[96];
+		ebuf[0] = 0;
+		if (vec_eval_node(env, expr, &mv, ebuf, sizeof(ebuf)) == 0 &&
+		    mv.kind == VEC_VALUE_MATRIX && mv.cols == 2 && mv.rows > 0 && mv.mat) {
+			size_t bits = (size_t)w * (size_t)h;
+			size_t bytes = (bits + 7) / 8;
+			mask = calloc(bytes, 1);
+			if (!mask) {
+				snprintf(err, errsz, "plot: out of memory");
+				vec_value_destroy(&mv);
+				return -1;
 			}
-			if (v.kind != VEC_VALUE_NUMBER) {
-				prev_valid = 0;
-				continue;
+			int prev_valid = 0;
+			int prev_px = 0;
+			int prev_py = 0;
+			for (int i = 0; i < mv.rows; i++) {
+				double x = mv.mat[i * 2 + 0];
+				double y = mv.mat[i * 2 + 1];
+				if (!isfinite(x) || !isfinite(y)) {
+					prev_valid = 0;
+					continue;
+				}
+				int px = map_x(x, x_min, x_max, w);
+				int py = map_y(y, y_min, y_max, h);
+				if (prev_valid) {
+					mask_draw_line(mask, w, h, prev_px, prev_py, px, py);
+				} else {
+					mask_set(mask, (size_t)py * (size_t)w + (size_t)px);
+				}
+				prev_valid = 1;
+				prev_px = px;
+				prev_py = py;
 			}
-			double y = vec_number_float64(v.num);
-			if (!isfinite(y)) {
-				prev_valid = 0;
-				continue;
+			use_mask = 1;
+		} else {
+			vec_value_destroy(&mv);
+			memset(&mv, 0, sizeof(mv));
+
+			int prev_valid = 0;
+			int prev_y = 0;
+			for (int px = 0; px < w; px++) {
+				double x = x_min + ((double)px / (double)(w - 1)) * (x_max - x_min);
+				vec_value v;
+				memset(&v, 0, sizeof(v));
+				ebuf[0] = 0;
+				if (vec_eval_node_override(env, expr, "x", vec_value_number(vec_float(x)), &v, ebuf, sizeof(ebuf)) != 0) {
+					prev_valid = 0;
+					continue;
+				}
+				if (v.kind != VEC_VALUE_NUMBER) {
+					prev_valid = 0;
+					continue;
+				}
+				double y = vec_number_float64(v.num);
+				if (!isfinite(y)) {
+					prev_valid = 0;
+					continue;
+				}
+				double ty = (y - y_min) / (y_max - y_min);
+				int yp = y0 + (h - 1 - (int)lround(ty * (double)(h - 1)));
+				yp = clamp_int(yp, y0, y0 + h - 1);
+				int relx = px;
+				if (prev_valid) {
+					int lo = prev_y < yp ? prev_y : yp;
+					int hi = prev_y > yp ? prev_y : yp;
+					ylo[relx] = (int16_t)lo;
+					yhi[relx] = (int16_t)hi;
+				} else {
+					ylo[relx] = (int16_t)yp;
+					yhi[relx] = (int16_t)yp;
+				}
+				prev_valid = 1;
+				prev_y = yp;
 			}
-			double ty = (y - y_min) / (y_max - y_min);
-			int yp = y0 + (h - 1 - (int)lround(ty * (double)(h - 1)));
-			yp = clamp_int(yp, y0, y0 + h - 1);
-			int relx = px;
-			if (prev_valid) {
-				int lo = prev_y < yp ? prev_y : yp;
-				int hi = prev_y > yp ? prev_y : yp;
-				ylo[relx] = (int16_t)lo;
-				yhi[relx] = (int16_t)hi;
-			} else {
-				ylo[relx] = (int16_t)yp;
-				yhi[relx] = (int16_t)yp;
-			}
-			prev_valid = 1;
-			prev_y = yp;
 		}
 	}
 
@@ -135,16 +229,28 @@ int vec_plot_render(struct vec_fb *fb, int x0, int y0, int w, int h,
 					c = axis;
 				if (axis_y >= 0 && y == axis_y)
 					c = axis;
-				if (expr && ylo[px] >= 0 && yhi[px] >= 0 && y >= ylo[px] && y <= yhi[px])
-					c = plot;
+				if (use_mask) {
+					size_t bit = (size_t)(by + py) * (size_t)w + (size_t)px;
+					if (mask_get(mask, bit))
+						c = plot;
+				} else {
+					if (expr && ylo[px] >= 0 && yhi[px] >= 0 && y >= ylo[px] && y <= yhi[px])
+						c = plot;
+				}
 				put_px(&dst, c);
 			}
 		}
 
 		if (vec_fb_write_box(fb) != 0) {
 			snprintf(err, errsz, "plot: fb write failed");
+			free(mask);
+			if (use_mask)
+				vec_value_destroy(&mv);
 			return -1;
 		}
 	}
+	free(mask);
+	if (use_mask)
+		vec_value_destroy(&mv);
 	return 0;
 }
