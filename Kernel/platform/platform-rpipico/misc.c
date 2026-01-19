@@ -69,6 +69,15 @@ int plt_dev_ioctl(uarg_t request, char *data)
         }
         return 0;
     }
+    case PICOIOC_GET_I2C_STATS: {
+        struct picocalc_i2c_stats st;
+        if (!valaddr_w((unsigned char *)data, sizeof(st)))
+            return -1;
+        picocalc_i2c_stats_snapshot(&st);
+        if (uput(&st, data, sizeof(st)))
+            return -1;
+        return 0;
+    }
     default:
         udata.u_error = EINVAL;
         return -1;
