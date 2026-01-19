@@ -8,5 +8,6 @@
 vec_mat_err vec_solve_linear_system(const double *a, const double *b, int n, double **out);
 vec_mat_err vec_solve_linear_system_multi(const double *a, const double *b, int n, int m, double **out);
 
-#endif
+vec_mat_err vec_qr_decompose(int m, int n, const double *a, double **out_q, double **out_r);
 
+#endif

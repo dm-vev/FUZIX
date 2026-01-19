@@ -14,6 +14,19 @@ static int mul_size(size_t a, size_t b, size_t *out)
 	return 0;
 }
 
+static vec_mat_err matrix_check(int rows, int cols, const double *data)
+{
+	if (rows <= 0 || cols <= 0)
+		return VEC_MAT_ERR_INVALID;
+	if (!data)
+		return VEC_MAT_ERR_INVALID;
+	size_t n;
+	if (mul_size((size_t)rows, (size_t)cols, &n) != 0)
+		return VEC_MAT_ERR_INVALID;
+	(void)n;
+	return VEC_MAT_OK;
+}
+
 vec_mat_err vec_solve_linear_system(const double *a, const double *b, int n, double **out)
 {
 	if (!out)
@@ -199,3 +212,63 @@ vec_mat_err vec_solve_linear_system_multi(const double *a, const double *b, int 
 	return VEC_MAT_OK;
 }
 
+vec_mat_err vec_qr_decompose(int m, int n, const double *a, double **out_q, double **out_r)
+{
+	if (!out_q || !out_r)
+		return VEC_MAT_ERR_INVALID;
+	*out_q = NULL;
+	*out_r = NULL;
+	if (matrix_check(m, n, a) != VEC_MAT_OK)
+		return VEC_MAT_ERR_INVALID;
+	if (m < 1 || n < 1)
+		return VEC_MAT_ERR_INVALID;
+
+	size_t mn;
+	if (mul_size((size_t)m, (size_t)n, &mn) != 0)
+		return VEC_MAT_ERR_INVALID;
+	size_t nn;
+	if (mul_size((size_t)n, (size_t)n, &nn) != 0)
+		return VEC_MAT_ERR_INVALID;
+
+	double *q = malloc(sizeof(q[0]) * mn);
+	if (!q)
+		return VEC_MAT_ERR_NOMEM;
+	memcpy(q, a, sizeof(q[0]) * mn);
+
+	double *r = calloc(nn, sizeof(r[0]));
+	if (!r) {
+		free(q);
+		return VEC_MAT_ERR_NOMEM;
+	}
+
+	for (int k = 0; k < n; k++) {
+		double norm = 0;
+		for (int i = 0; i < m; i++) {
+			double v = q[(size_t)i * (size_t)n + (size_t)k];
+			norm += v * v;
+		}
+		norm = sqrt(norm);
+		if (norm == 0 || isnan(norm) || isinf(norm)) {
+			free(q);
+			free(r);
+			return VEC_MAT_ERR_SINGULAR;
+		}
+		r[(size_t)k * (size_t)n + (size_t)k] = norm;
+		double inv = 1 / norm;
+		for (int i = 0; i < m; i++)
+			q[(size_t)i * (size_t)n + (size_t)k] *= inv;
+
+		for (int j = k + 1; j < n; j++) {
+			double dot = 0;
+			for (int i = 0; i < m; i++)
+				dot += q[(size_t)i * (size_t)n + (size_t)k] * q[(size_t)i * (size_t)n + (size_t)j];
+			r[(size_t)k * (size_t)n + (size_t)j] = dot;
+			for (int i = 0; i < m; i++)
+				q[(size_t)i * (size_t)n + (size_t)j] -= dot * q[(size_t)i * (size_t)n + (size_t)k];
+		}
+	}
+
+	*out_q = q;
+	*out_r = r;
+	return VEC_MAT_OK;
+}
