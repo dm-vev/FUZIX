@@ -67,6 +67,7 @@ clean:
 	$(MAKE) -C ../../../Applications/cave -f Makefile.armm0 clean
 	$(MAKE) -C ../../../Applications/cursesgames -f Makefile.armm0 clean
 	$(MAKE) -C ../../../Applications/mc -f Makefile.armm0 clean
+	$(MAKE) -C ../../../Applications/vector -f Makefile.armm0 clean
 	$(MAKE) -C ../../../Standalone clean
 	$(MAKE) -C utils clean
 
@@ -82,5 +83,6 @@ world: build/fuzix.elf
 	$(MAKE) -C ../../../Applications/cave -f Makefile.armm0
 	$(MAKE) -C ../../../Applications/cursesgames -f Makefile.armm0
 	$(MAKE) -C ../../../Applications/mc -f Makefile.armm0
+	$(MAKE) -C ../../../Applications/vector -f Makefile.armm0
 	$(MAKE) -C ../../../Standalone
 	$(MAKE) -C utils
