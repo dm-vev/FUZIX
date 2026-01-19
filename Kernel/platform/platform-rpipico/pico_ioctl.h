@@ -9,6 +9,9 @@
 /* Get PicoCalc status (battery/backlight/etc) */
 #define PICOIOC_GET_STATUS 0x0002
 
+/* Set PicoCalc LCD backlight (percent 0-100) */
+#define PICOIOC_SET_LCD_BACKLIGHT 0x0003
+
 enum {
 	PICOCALC_BATF_CHARGING = 0x01,
 };

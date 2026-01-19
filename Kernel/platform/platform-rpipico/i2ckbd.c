@@ -137,6 +137,16 @@ void picocalc_status_snapshot(struct picocalc_status *out)
     irqrestore(irq);
 }
 
+int picocalc_set_lcd_backlight(uint8_t level)
+{
+    irqflags_t irq = di();
+    int r = I2C_Send_RegData(I2C_KBD_ADDR, 0x05, (char)level);
+    if (r == 0)
+        status_cache.lcd_backlight = level;
+    irqrestore(irq);
+    return r;
+}
+
 int I2C_Send_RegData(int i2caddr,int reg,char command){
     int retval;
     unsigned char I2C_Send_Buffer[2];

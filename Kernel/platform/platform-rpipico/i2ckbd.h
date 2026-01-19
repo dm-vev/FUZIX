@@ -19,5 +19,6 @@ int I2C_Send_RegData(int i2caddr,int reg,char command);
 
 struct picocalc_status;
 void picocalc_status_snapshot(struct picocalc_status *out);
+int picocalc_set_lcd_backlight(uint8_t level);
 
 #endif

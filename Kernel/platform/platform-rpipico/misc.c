@@ -51,6 +51,24 @@ int plt_dev_ioctl(uarg_t request, char *data)
             return -1;
         return 0;
     }
+    case PICOIOC_SET_LCD_BACKLIGHT: {
+        uint8_t pct;
+        if (!valaddr_r((unsigned char *)data, sizeof(pct)))
+            return -1;
+        if (uget(data, &pct, sizeof(pct)))
+            return -1;
+        if (pct > 100) {
+            udata.u_error = EINVAL;
+            return -1;
+        }
+        uint16_t level = (uint16_t)pct * 255;
+        level /= 100;
+        if (picocalc_set_lcd_backlight((uint8_t)level) < 0) {
+            udata.u_error = EIO;
+            return -1;
+        }
+        return 0;
+    }
     default:
         udata.u_error = EINVAL;
         return -1;
@@ -86,4 +104,3 @@ usize_t valaddr_w(const uint8_t *pp, usize_t l)
 }
 
 /* vim: sw=4 ts=4 et: */
-
