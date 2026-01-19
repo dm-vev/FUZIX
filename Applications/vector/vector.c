@@ -21,13 +21,29 @@
 
 enum {
 	MAX_OUTPUT_LINES = 200,
-	MAX_HISTORY = 200
+	MAX_HISTORY = 200,
+	MAX_PLOTS = 8,
+	MAX_PLOT_POINTS = 1024
 };
 
 enum vec_tab {
 	TAB_TERMINAL = 0,
 	TAB_PLOT = 1,
 	TAB_STACK = 2,
+};
+
+enum ui_plot_kind {
+	UI_PLOT_FUNC = 0,
+	UI_PLOT_SERIES = 1,
+};
+
+struct ui_plot {
+	enum ui_plot_kind kind;
+	char src[128];
+	vec_node *expr;
+	float *xs;
+	float *ys;
+	size_t len;
 };
 
 struct ui_state {
@@ -62,6 +78,9 @@ struct ui_state {
 	char graph_src[128];
 	vec_node *graph;
 
+	struct ui_plot plots[MAX_PLOTS];
+	int plot_count;
+
 	double x_min;
 	double x_max;
 	double y_min;
@@ -87,6 +106,203 @@ static void ui_set_message(struct ui_state *u, const char *s)
 	if (!s)
 		s = "";
 	snprintf(u->message, sizeof(u->message), "%s", s);
+}
+
+static void ui_plot_destroy(struct ui_plot *p)
+{
+	if (!p)
+		return;
+	vec_node_destroy(p->expr);
+	free(p->xs);
+	free(p->ys);
+	memset(p, 0, sizeof(*p));
+}
+
+static void ui_plots_clear(struct ui_state *u)
+{
+	if (!u)
+		return;
+	for (int i = 0; i < u->plot_count; i++)
+		ui_plot_destroy(&u->plots[i]);
+	u->plot_count = 0;
+}
+
+static int ui_add_plot_func(struct ui_state *u, const char *src, const vec_node *expr)
+{
+	if (!u || !expr)
+		return -1;
+	if (!src)
+		src = "<expr>";
+
+	if (u->plot_count > 0 && !strcmp(u->plots[u->plot_count - 1].src, src))
+		return 0;
+
+	if (u->plot_count >= MAX_PLOTS) {
+		ui_plot_destroy(&u->plots[0]);
+		memmove(&u->plots[0], &u->plots[1], sizeof(u->plots[0]) * (MAX_PLOTS - 1));
+		u->plot_count = MAX_PLOTS - 1;
+	}
+
+	vec_node *ex = vec_node_clone(expr);
+	if (!ex)
+		return -1;
+
+	struct ui_plot *p = &u->plots[u->plot_count++];
+	memset(p, 0, sizeof(*p));
+	p->kind = UI_PLOT_FUNC;
+	snprintf(p->src, sizeof(p->src), "%s", src);
+	p->expr = ex;
+	return 0;
+}
+
+static int series_copy_downsample(const double *xs, const double *ys, size_t n,
+				  float **out_xs, float **out_ys, size_t *out_n)
+{
+	if (!out_xs || !out_ys || !out_n)
+		return -1;
+	*out_xs = NULL;
+	*out_ys = NULL;
+	*out_n = 0;
+	if (!xs || !ys || n == 0)
+		return -1;
+
+	size_t step = 1;
+	size_t cap = n;
+	if (MAX_PLOT_POINTS > 1 && n > (size_t)MAX_PLOT_POINTS) {
+		step = n / (size_t)MAX_PLOT_POINTS;
+		if (step < 1)
+			step = 1;
+		cap = (size_t)MAX_PLOT_POINTS;
+	}
+
+	float *dx = malloc(sizeof(dx[0]) * cap);
+	float *dy = malloc(sizeof(dy[0]) * cap);
+	if (!dx || !dy) {
+		free(dx);
+		free(dy);
+		return -1;
+	}
+
+	size_t m = 0;
+	for (size_t i = 0; i < n && m < cap; i += step) {
+		dx[m] = (float)xs[i];
+		dy[m] = (float)ys[i];
+		m++;
+	}
+	if (m == 0) {
+		free(dx);
+		free(dy);
+		return -1;
+	}
+	dx[m - 1] = (float)xs[n - 1];
+	dy[m - 1] = (float)ys[n - 1];
+
+	*out_xs = dx;
+	*out_ys = dy;
+	*out_n = m;
+	return 0;
+}
+
+static int matrix_copy_downsample(const double *mat, size_t rows,
+				  float **out_xs, float **out_ys, size_t *out_n)
+{
+	if (!out_xs || !out_ys || !out_n)
+		return -1;
+	*out_xs = NULL;
+	*out_ys = NULL;
+	*out_n = 0;
+	if (!mat || rows == 0)
+		return -1;
+
+	size_t step = 1;
+	size_t cap = rows;
+	if (MAX_PLOT_POINTS > 1 && rows > (size_t)MAX_PLOT_POINTS) {
+		step = rows / (size_t)MAX_PLOT_POINTS;
+		if (step < 1)
+			step = 1;
+		cap = (size_t)MAX_PLOT_POINTS;
+	}
+
+	float *dx = malloc(sizeof(dx[0]) * cap);
+	float *dy = malloc(sizeof(dy[0]) * cap);
+	if (!dx || !dy) {
+		free(dx);
+		free(dy);
+		return -1;
+	}
+
+	size_t m = 0;
+	for (size_t i = 0; i < rows && m < cap; i += step) {
+		dx[m] = (float)mat[i * 2 + 0];
+		dy[m] = (float)mat[i * 2 + 1];
+		m++;
+	}
+	if (m == 0) {
+		free(dx);
+		free(dy);
+		return -1;
+	}
+	dx[m - 1] = (float)mat[(rows - 1) * 2 + 0];
+	dy[m - 1] = (float)mat[(rows - 1) * 2 + 1];
+
+	*out_xs = dx;
+	*out_ys = dy;
+	*out_n = m;
+	return 0;
+}
+
+static int ui_add_plot_series_owned(struct ui_state *u, const char *src,
+				    float *xs, float *ys, size_t n)
+{
+	if (!u || !xs || !ys || n == 0) {
+		free(xs);
+		free(ys);
+		return -1;
+	}
+	if (!src)
+		src = "series";
+
+	if (u->plot_count >= MAX_PLOTS) {
+		ui_plot_destroy(&u->plots[0]);
+		memmove(&u->plots[0], &u->plots[1], sizeof(u->plots[0]) * (MAX_PLOTS - 1));
+		u->plot_count = MAX_PLOTS - 1;
+	}
+
+	struct ui_plot *p = &u->plots[u->plot_count++];
+	memset(p, 0, sizeof(*p));
+	p->kind = UI_PLOT_SERIES;
+	snprintf(p->src, sizeof(p->src), "%s", src);
+	p->xs = xs;
+	p->ys = ys;
+	p->len = n;
+	return 0;
+}
+
+static int ui_add_plot_series(struct ui_state *u, const char *src,
+			      const double *xs, const double *ys, size_t n)
+{
+	if (!u || !xs || !ys || n == 0)
+		return -1;
+
+	float *dx = NULL;
+	float *dy = NULL;
+	size_t m = 0;
+	if (series_copy_downsample(xs, ys, n, &dx, &dy, &m) != 0)
+		return -1;
+	return ui_add_plot_series_owned(u, src, dx, dy, m);
+}
+
+static int ui_add_plot_matrix_xy(struct ui_state *u, const char *src, const vec_value *v)
+{
+	if (!u || !v || v->kind != VEC_VALUE_MATRIX || v->cols != 2 || v->rows <= 0 || !v->mat)
+		return -1;
+
+	float *dx = NULL;
+	float *dy = NULL;
+	size_t m = 0;
+	if (matrix_copy_downsample(v->mat, (size_t)v->rows, &dx, &dy, &m) != 0)
+		return -1;
+	return ui_add_plot_series_owned(u, src, dx, dy, m);
 }
 
 static void ui_clip_cols(const struct ui_state *u, char *s, size_t ssz)
@@ -562,9 +778,51 @@ static void ui_plot_zoom(struct ui_state *u, double factor)
 	ui_normalize_view(u);
 }
 
-static void ui_autoscale_matrix_xy(struct ui_state *u, const vec_value *v)
+static void ui_set_domain_from_array(struct ui_state *u, const vec_value *v)
 {
-	if (!u || !v || v->kind != VEC_VALUE_MATRIX || v->cols != 2 || v->rows <= 0 || !v->mat)
+	if (!u || !v || v->kind != VEC_VALUE_ARRAY || !v->arr || v->len < 2)
+		return;
+
+	double min = v->arr[0];
+	double max = v->arr[0];
+	for (size_t i = 1; i < v->len; i++) {
+		double x = v->arr[i];
+		if (x < min)
+			min = x;
+		if (x > max)
+			max = x;
+	}
+	if (min < max) {
+		u->x_min = min;
+		u->x_max = max;
+		ui_normalize_view(u);
+	}
+}
+
+static void ui_set_range_from_array(struct ui_state *u, const vec_value *v)
+{
+	if (!u || !v || v->kind != VEC_VALUE_ARRAY || !v->arr || v->len < 2)
+		return;
+
+	double min = v->arr[0];
+	double max = v->arr[0];
+	for (size_t i = 1; i < v->len; i++) {
+		double y = v->arr[i];
+		if (y < min)
+			min = y;
+		if (y > max)
+			max = y;
+	}
+	if (min < max) {
+		u->y_min = min;
+		u->y_max = max;
+		ui_normalize_view(u);
+	}
+}
+
+static void ui_autoscale_from_series(struct ui_state *u)
+{
+	if (!u || u->plot_count <= 0)
 		return;
 
 	double minx = DBL_MAX;
@@ -572,19 +830,24 @@ static void ui_autoscale_matrix_xy(struct ui_state *u, const vec_value *v)
 	double miny = DBL_MAX;
 	double maxy = -DBL_MAX;
 
-	for (int i = 0; i < v->rows; i++) {
-		double x = v->mat[i * 2 + 0];
-		double y = v->mat[i * 2 + 1];
-		if (!isfinite(x) || !isfinite(y))
+	for (int i = 0; i < u->plot_count; i++) {
+		const struct ui_plot *p = &u->plots[i];
+		if (!p || p->kind != UI_PLOT_SERIES || !p->xs || !p->ys || p->len == 0)
 			continue;
-		if (x < minx)
-			minx = x;
-		if (x > maxx)
-			maxx = x;
-		if (y < miny)
-			miny = y;
-		if (y > maxy)
-			maxy = y;
+		for (size_t j = 0; j < p->len; j++) {
+			double x = (double)p->xs[j];
+			double y = (double)p->ys[j];
+			if (!isfinite(x) || !isfinite(y))
+				continue;
+			if (x < minx)
+				minx = x;
+			if (x > maxx)
+				maxx = x;
+			if (y < miny)
+				miny = y;
+			if (y > maxy)
+				maxy = y;
+		}
 	}
 
 	if (minx < DBL_MAX && maxx > -DBL_MAX && minx < maxx) {
@@ -601,6 +864,197 @@ static void ui_autoscale_matrix_xy(struct ui_state *u, const vec_value *v)
 	ui_normalize_view(u);
 }
 
+static void ui_autoscale_func(struct ui_state *u)
+{
+	if (!u || !u->graph || u->x_min >= u->x_max)
+		return;
+
+	double miny = DBL_MAX;
+	double maxy = -DBL_MAX;
+	for (int i = 0; i < 240; i++) {
+		double x = u->x_min + ((double)i / 239.0) * (u->x_max - u->x_min);
+		vec_value v;
+		char ebuf[64];
+		memset(&v, 0, sizeof(v));
+		ebuf[0] = 0;
+		if (vec_eval_node_override(&u->env, u->graph, "x", vec_value_number(vec_float(x)),
+					   &v, ebuf, sizeof(ebuf)) != 0)
+			continue;
+		if (v.kind != VEC_VALUE_NUMBER)
+			continue;
+		double y = vec_number_float64(v.num);
+		if (!isfinite(y))
+			continue;
+		if (y < miny)
+			miny = y;
+		if (y > maxy)
+			maxy = y;
+	}
+	if (miny < DBL_MAX && maxy > -DBL_MAX && miny < maxy) {
+		double pad = (maxy - miny) * 0.1;
+		if (pad == 0)
+			pad = 1;
+		u->y_min = miny - pad;
+		u->y_max = maxy + pad;
+		ui_normalize_view(u);
+	}
+}
+
+static void ui_autoscale_plots(struct ui_state *u)
+{
+	if (!u)
+		return;
+	if (u->plot_count > 0) {
+		ui_autoscale_from_series(u);
+		return;
+	}
+
+	if (u->graph) {
+		vec_value gv;
+		memset(&gv, 0, sizeof(gv));
+		char gerr[96];
+		gerr[0] = 0;
+		if (vec_eval_node(&u->env, u->graph, &gv, gerr, sizeof(gerr)) == 0 &&
+		    gv.kind == VEC_VALUE_MATRIX && gv.cols == 2 && gv.rows > 0 && gv.mat) {
+			double minx = DBL_MAX;
+			double maxx = -DBL_MAX;
+			double miny = DBL_MAX;
+			double maxy = -DBL_MAX;
+
+			for (int i = 0; i < gv.rows; i++) {
+				double x = gv.mat[i * 2 + 0];
+				double y = gv.mat[i * 2 + 1];
+				if (!isfinite(x) || !isfinite(y))
+					continue;
+				if (x < minx)
+					minx = x;
+				if (x > maxx)
+					maxx = x;
+				if (y < miny)
+					miny = y;
+				if (y > maxy)
+					maxy = y;
+			}
+
+			if (minx < DBL_MAX && maxx > -DBL_MAX && minx < maxx) {
+				u->x_min = minx;
+				u->x_max = maxx;
+			}
+			if (miny < DBL_MAX && maxy > -DBL_MAX && miny < maxy) {
+				double pad = (maxy - miny) * 0.1;
+				if (pad == 0)
+					pad = 1;
+				u->y_min = miny - pad;
+				u->y_max = maxy + pad;
+			}
+			ui_normalize_view(u);
+			vec_value_destroy(&gv);
+			return;
+		}
+		vec_value_destroy(&gv);
+	}
+	ui_autoscale_func(u);
+}
+
+static void ui_set_graph_take(struct ui_state *u, const char *src, vec_node *expr)
+{
+	if (!u) {
+		vec_node_destroy(expr);
+		return;
+	}
+	if (u->graph)
+		vec_node_destroy(u->graph);
+	u->graph = expr;
+	snprintf(u->graph_src, sizeof(u->graph_src), "%s", src ? src : "");
+
+	if (u->graph && vec_node_has_ident(u->graph, "x"))
+		ui_autoscale_plots(u);
+}
+
+static void ui_set_graph_clone(struct ui_state *u, const char *src, const vec_node *expr)
+{
+	if (!u)
+		return;
+	vec_node *cpy = expr ? vec_node_clone(expr) : NULL;
+	if (expr && !cpy) {
+		ui_set_message(u, "eval: out of memory");
+		return;
+	}
+	ui_set_graph_take(u, src, cpy);
+}
+
+static void ui_try_plot_series(struct ui_state *u, const char *label, const vec_value *v)
+{
+	if (!u || !label || !v)
+		return;
+	if (!strcmp(label, "x"))
+		return;
+	if (v->kind != VEC_VALUE_ARRAY || !v->arr || v->len == 0)
+		return;
+
+	vec_value xv;
+	memset(&xv, 0, sizeof(xv));
+	if (vec_env_get_var(&u->env, "x", &xv) != 0)
+		return;
+	if (xv.kind != VEC_VALUE_ARRAY || !xv.arr || xv.len != v->len) {
+		vec_value_destroy(&xv);
+		return;
+	}
+
+	if (ui_add_plot_series(u, label, xv.arr, v->arr, v->len) == 0)
+		ui_autoscale_plots(u);
+	vec_value_destroy(&xv);
+}
+
+static void ui_try_plot_matrix_xy(struct ui_state *u, const char *label, const vec_value *v)
+{
+	if (!u || !label || !v)
+		return;
+	if (v->kind != VEC_VALUE_MATRIX || v->cols != 2 || v->rows <= 0 || !v->mat)
+		return;
+	if (ui_add_plot_matrix_xy(u, label, v) == 0)
+		ui_autoscale_plots(u);
+}
+
+static void ui_force_plot(struct ui_state *u)
+{
+	if (!u)
+		return;
+
+	/* 1) Prefer existing graph expression. */
+	if (u->graph && vec_node_has_ident(u->graph, "x")) {
+		const char *src = u->graph_src[0] ? u->graph_src : "<expr>";
+		(void)ui_add_plot_func(u, src, u->graph);
+		return;
+	}
+
+	/* 2) If y is defined as an expression, plot it as y(x). */
+	vec_value yv;
+	memset(&yv, 0, sizeof(yv));
+	if (vec_env_get_var(&u->env, "y", &yv) == 0) {
+		if (yv.kind == VEC_VALUE_EXPR && yv.expr && vec_node_has_ident(yv.expr, "x")) {
+			char exbuf[128];
+			exbuf[0] = 0;
+			(void)vec_node_to_string(yv.expr, exbuf, sizeof(exbuf));
+			char src[160];
+			snprintf(src, sizeof(src), "y = %s", exbuf[0] ? exbuf : "<expr>");
+			ui_set_graph_clone(u, src, yv.expr);
+			(void)ui_add_plot_func(u, src, yv.expr);
+			vec_value_destroy(&yv);
+			return;
+		}
+		vec_value_destroy(&yv);
+	}
+
+	/* 3) If y is an array and x is an array, plot a series. */
+	memset(&yv, 0, sizeof(yv));
+	if (vec_env_get_var(&u->env, "y", &yv) == 0) {
+		if (yv.kind == VEC_VALUE_ARRAY)
+			ui_try_plot_series(u, "y", &yv);
+		vec_value_destroy(&yv);
+	}
+}
+
 static void ui_handle_command(struct ui_state *u, const char *cmdline)
 {
 	if (!u || !cmdline)
@@ -610,6 +1064,11 @@ static void ui_handle_command(struct ui_state *u, const char *cmdline)
 		const char *expr = cmdline + 4;
 		while (*expr == ' ')
 			expr++;
+		if (!*expr) {
+			ui_force_plot(u);
+			ui_switch_tab(u, TAB_PLOT);
+			return;
+		}
 		if (*expr) {
 			char err[128];
 			memset(err, 0, sizeof(err));
@@ -623,18 +1082,57 @@ static void ui_handle_command(struct ui_state *u, const char *cmdline)
 				ui_set_message(u, "plot: expected single expression");
 				return;
 			}
-			if (u->graph)
-				vec_node_destroy(u->graph);
-			u->graph = acts.items[0].expr;
+			ui_set_graph_take(u, expr, acts.items[0].expr);
 			acts.items[0].expr = NULL;
 			vec_actions_destroy(&acts);
-
-			snprintf(u->graph_src, sizeof(u->graph_src), "%s", expr);
 			ui_set_message(u, "plot updated");
 		}
 		if (!u->graph && !*expr)
 			ui_set_message(u, "plot: no expression set");
 		ui_switch_tab(u, TAB_PLOT);
+		return;
+	}
+	if (!strcmp(cmdline, "plotclear")) {
+		ui_plots_clear(u);
+		ui_set_message(u, "plots cleared");
+		return;
+	}
+	if (!strcmp(cmdline, "plots")) {
+		if (u->plot_count == 0) {
+			ui_append_line(u, "plots: (none)");
+			return;
+		}
+		char line[196];
+		for (int i = 0; i < u->plot_count; i++) {
+			const char *src = u->plots[i].src[0] ? u->plots[i].src : "<expr>";
+			snprintf(line, sizeof(line), "plot[%d]: %s", i, src);
+			ui_append_line(u, line);
+		}
+		return;
+	}
+	if (!strncmp(cmdline, "plotdel", 6) && (cmdline[6] == 0 || isspace((unsigned char)cmdline[6]))) {
+		const char *p = cmdline + 6;
+		while (*p == ' ')
+			p++;
+		if (!*p) {
+			ui_set_message(u, "usage: :plotdel N");
+			return;
+		}
+		int idx = atoi(p);
+		if (idx < 0 || idx >= u->plot_count) {
+			int alt = idx - 1;
+			if (alt >= 0 && alt < u->plot_count)
+				idx = alt;
+		}
+		if (idx < 0 || idx >= u->plot_count) {
+			ui_set_message(u, "plot index out of range");
+			return;
+		}
+		ui_plot_destroy(&u->plots[idx]);
+		if (idx + 1 < u->plot_count)
+			memmove(&u->plots[idx], &u->plots[idx + 1], sizeof(u->plots[idx]) * (size_t)(u->plot_count - idx - 1));
+		u->plot_count--;
+		ui_set_message(u, "plot deleted");
 		return;
 	}
 	if (!strcmp(cmdline, "help")) {
@@ -709,54 +1207,12 @@ static void ui_handle_command(struct ui_state *u, const char *cmdline)
 		return;
 	}
 	if (!strcmp(cmdline, "autoscale")) {
-		if (!u->graph) {
+		if (u->plot_count == 0 && !u->graph) {
 			ui_set_message(u, "autoscale: no plot");
 			return;
 		}
-		vec_value gv;
-		memset(&gv, 0, sizeof(gv));
-		char gerr[96];
-		gerr[0] = 0;
-		if (vec_eval_node(&u->env, u->graph, &gv, gerr, sizeof(gerr)) == 0) {
-			if (gv.kind == VEC_VALUE_MATRIX && gv.cols == 2) {
-				ui_autoscale_matrix_xy(u, &gv);
-				vec_value_destroy(&gv);
-				ui_set_message(u, "autoscaled");
-				return;
-			}
-			vec_value_destroy(&gv);
-		}
-		double miny = 1e300;
-		double maxy = -1e300;
-		for (int i = 0; i < 240; i++) {
-			double x = u->x_min + ((double)i / 239.0) * (u->x_max - u->x_min);
-			vec_value v;
-			char ebuf[64];
-			memset(&v, 0, sizeof(v));
-			ebuf[0] = 0;
-			if (vec_eval_node_override(&u->env, u->graph, "x", vec_value_number(vec_float(x)),
-						   &v, ebuf, sizeof(ebuf)) != 0)
-				continue;
-			if (v.kind != VEC_VALUE_NUMBER)
-				continue;
-			double y = vec_number_float64(v.num);
-			if (!isfinite(y))
-				continue;
-			if (y < miny)
-				miny = y;
-			if (y > maxy)
-				maxy = y;
-		}
-		if (miny <= maxy && isfinite(miny) && isfinite(maxy) && miny != maxy) {
-			double pad = (maxy - miny) * 0.1;
-			if (pad == 0)
-				pad = 1;
-			u->y_min = miny - pad;
-			u->y_max = maxy + pad;
-			ui_set_message(u, "autoscaled");
-		} else {
-			ui_set_message(u, "autoscale: no finite samples");
-		}
+		ui_autoscale_plots(u);
+		ui_set_message(u, "autoscale");
 		return;
 	}
 	if (!strcmp(cmdline, "clear")) {
@@ -849,11 +1305,16 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 							 ui_format_value(u, &ev, buf, sizeof(buf)));
 						ui_append_line(u, out);
 					}
-					if (u->graph)
-						vec_node_destroy(u->graph);
-					u->graph = vec_node_clone(simp);
-					snprintf(u->graph_src, sizeof(u->graph_src), "%s", line);
-					ui_set_message(u, "plot expr captured (F2)");
+					{
+						char exbuf[128];
+						exbuf[0] = 0;
+						(void)vec_node_to_string(simp, exbuf, sizeof(exbuf));
+						char src[160];
+						snprintf(src, sizeof(src), "%s = %s", a->var_name, exbuf[0] ? exbuf : "<expr>");
+						ui_set_graph_clone(u, src, simp);
+						if (vec_node_has_ident(simp, "x"))
+							(void)ui_add_plot_func(u, src, simp);
+					}
 					continue;
 				}
 				ui_append_line(u, err[0] ? err : "eval error");
@@ -870,20 +1331,23 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 				snprintf(out, sizeof(out), "%s = %s", a->var_name, ui_format_value(u, &v, buf, sizeof(buf)));
 				ui_append_line(u, out);
 			}
-			if (v.kind == VEC_VALUE_MATRIX && v.cols == 2 && a->var_name) {
-				if (u->graph)
-					vec_node_destroy(u->graph);
-				u->graph = vec_node_ident_new(a->var_name, strlen(a->var_name));
-				snprintf(u->graph_src, sizeof(u->graph_src), "%s", a->var_name);
-				ui_set_message(u, "plot series captured (F2)");
-				ui_autoscale_matrix_xy(u, &v);
-			} else if (v.kind == VEC_VALUE_EXPR && v.expr && a->var_name && !strcmp(a->var_name, "y") &&
-				   vec_node_has_ident(v.expr, "x")) {
-				if (u->graph)
-					vec_node_destroy(u->graph);
-				u->graph = vec_node_clone(v.expr);
-				snprintf(u->graph_src, sizeof(u->graph_src), "%s", a->var_name);
-				ui_set_message(u, "plot expr captured (F2)");
+			if (v.kind == VEC_VALUE_ARRAY && a->var_name) {
+				if (!strcmp(a->var_name, "x")) {
+					ui_set_domain_from_array(u, &v);
+				} else if (!strcmp(a->var_name, "y")) {
+					ui_set_range_from_array(u, &v);
+					ui_try_plot_series(u, "y", &v);
+				} else {
+					ui_try_plot_series(u, a->var_name, &v);
+				}
+			} else if (v.kind == VEC_VALUE_MATRIX && v.cols == 2 && a->var_name) {
+				ui_try_plot_matrix_xy(u, a->var_name, &v);
+			} else if (v.kind == VEC_VALUE_EXPR && v.expr && a->var_name) {
+				ui_set_graph_clone(u, a->var_name, v.expr);
+			} else if (v.kind == VEC_VALUE_NUMBER && a->var_name) {
+				vec_node *nn = vec_node_number_new(v.num);
+				if (nn)
+					ui_set_graph_take(u, a->var_name, nn);
 			}
 			continue;
 		}
@@ -904,49 +1368,50 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 		vec_value v;
 		memset(err, 0, sizeof(err));
 		if (vec_eval_node(&u->env, a->expr, &v, err, sizeof(err)) != 0) {
-			if (a->expr && vec_node_has_ident(a->expr, "x")) {
-				if (u->graph)
-					vec_node_destroy(u->graph);
-				u->graph = a->expr;
+			if (!strncmp(err, "eval: unknown variable", 22) &&
+			    a->expr && (vec_node_has_ident(a->expr, "x") || vec_node_has_ident(a->expr, "y"))) {
+				char src[160];
+				src[0] = 0;
+				(void)vec_node_to_string(a->expr, src, sizeof(src));
+				ui_set_graph_take(u, src[0] ? src : "<expr>", a->expr);
 				a->expr = NULL;
-				snprintf(u->graph_src, sizeof(u->graph_src), "%s", line);
-				ui_append_line(u, "= <plot expr>");
-				ui_set_message(u, "plot expr captured (F2)");
-			} else {
-				ui_append_line(u, err[0] ? err : "eval error");
+
+				char out[192];
+				snprintf(out, sizeof(out), "= %s", src[0] ? src : "<expr>");
+				ui_append_line(u, out);
+				continue;
 			}
+			ui_append_line(u, err[0] ? err : "eval error");
 			continue;
 		}
 		{
 			char buf[160];
-			ui_append_line(u, ui_format_value(u, &v, buf, sizeof(buf)));
+			char out[192];
+			snprintf(out, sizeof(out), "= %s", ui_format_value(u, &v, buf, sizeof(buf)));
+			ui_append_line(u, out);
 		}
-		if (v.kind == VEC_VALUE_MATRIX && v.cols == 2 && a->expr) {
-			if (u->graph)
-				vec_node_destroy(u->graph);
-			u->graph = a->expr;
-			a->expr = NULL;
-			snprintf(u->graph_src, sizeof(u->graph_src), "%s", line);
-			ui_set_message(u, "plot series captured (F2)");
-			ui_autoscale_matrix_xy(u, &v);
-		} else if (a->expr && vec_node_has_ident(a->expr, "x")) {
-			vec_node *plot = NULL;
-			if (v.kind == VEC_VALUE_EXPR && v.expr)
-				plot = v.expr;
-			else
-				plot = a->expr;
+		if (v.kind == VEC_VALUE_ARRAY) {
+			ui_try_plot_series(u, "result", &v);
+		} else if (v.kind == VEC_VALUE_MATRIX && v.cols == 2) {
+			ui_try_plot_matrix_xy(u, "result", &v);
+		} else if (a->expr) {
+			char src[160];
+			src[0] = 0;
+			(void)vec_node_to_string(a->expr, src, sizeof(src));
 
-			if (u->graph)
-				vec_node_destroy(u->graph);
-
-			if (plot == v.expr) {
-				u->graph = plot;
+			if (v.kind == VEC_VALUE_EXPR && v.expr) {
+				ui_set_graph_take(u, src[0] ? src : "<expr>", v.expr);
 				v.expr = NULL;
+			} else if (v.kind == VEC_VALUE_NUMBER) {
+				vec_node *nn = vec_node_number_new(v.num);
+				if (nn)
+					ui_set_graph_take(u, src[0] ? src : "<expr>", nn);
 			} else {
-				u->graph = plot;
-				a->expr = NULL;
+				ui_set_graph_clone(u, src[0] ? src : "<expr>", a->expr);
 			}
-			snprintf(u->graph_src, sizeof(u->graph_src), "%s", line);
+
+			if (vec_node_has_ident(a->expr, "x"))
+				(void)ui_add_plot_func(u, src[0] ? src : "<expr>", a->expr);
 		}
 		vec_value_destroy(&v);
 	}
@@ -1086,10 +1551,30 @@ static void ui_render_plot(struct ui_state *u)
 	if (plot_h > 0) {
 		char perr[96];
 		perr[0] = 0;
-		(void)vec_plot_render(&u->fb, 0, plot_y, u->fb.disp.width, plot_h,
-				      &u->env, u->graph,
-				      u->x_min, u->x_max, u->y_min, u->y_max,
-				      perr, sizeof(perr));
+		vec_plot plots[MAX_PLOTS];
+		size_t nplots = 0;
+		for (int i = 0; i < u->plot_count && nplots < (sizeof(plots) / sizeof(plots[0])); i++) {
+			const struct ui_plot *p = &u->plots[i];
+			vec_plot vp;
+			memset(&vp, 0, sizeof(vp));
+			if (p->kind == UI_PLOT_FUNC) {
+				vp.kind = VEC_PLOT_FUNC;
+				vp.expr = p->expr;
+			} else if (p->kind == UI_PLOT_SERIES) {
+				vp.kind = VEC_PLOT_SERIES;
+				vp.xs = p->xs;
+				vp.ys = p->ys;
+				vp.len = p->len;
+			} else {
+				continue;
+			}
+			plots[nplots++] = vp;
+		}
+		const vec_node *fallback = (nplots == 0) ? u->graph : NULL;
+		(void)vec_plot_render_multi(&u->fb, 0, plot_y, u->fb.disp.width, plot_h,
+					    &u->env, plots, nplots, fallback,
+					    u->x_min, u->x_max, u->y_min, u->y_max,
+					    perr, sizeof(perr));
 	}
 }
 
@@ -1155,7 +1640,11 @@ static void ui_render_help(struct ui_state *u)
 		"  Tab     (todo) autocomplete",
 		"",
 		"plot:",
+		"  :plot        force plot",
 		"  :plot EXPR   set plot expr",
+		"  :plots       list plots",
+		"  :plotdel N   delete plot",
+		"  :plotclear   clear plots",
 		"  arrows pan   +/- zoom   PgUp/PgDn zoom",
 		"  z zoom step  a autoscale  c term",
 		"",
@@ -1207,6 +1696,23 @@ static void ui_switch_tab(struct ui_state *u, enum vec_tab tab)
 
 	switch (u->tab) {
 	case TAB_PLOT:
+		if (!u->graph && u->plot_count == 0) {
+			ui_set_message(u, "no plot yet (enter sin(x) then Ctrl+G/F2)");
+			break;
+		}
+		if (u->x_min >= u->x_max) {
+			u->x_min = -10;
+			u->x_max = 10;
+		}
+		if (u->y_min >= u->y_max) {
+			u->y_min = -10;
+			u->y_max = 10;
+		}
+		if (u->plot_count == 0 && u->graph && vec_node_has_ident(u->graph, "x")) {
+			const char *src = u->graph_src[0] ? u->graph_src : "<expr>";
+			(void)ui_add_plot_func(u, src, u->graph);
+		}
+		ui_autoscale_plots(u);
 		ui_set_message(u, "arrows pan | +/- zoom | PgUp/PgDn zoom | z zoom step | a autoscale | c term");
 		break;
 	case TAB_STACK:
@@ -1553,6 +2059,7 @@ int main(int argc, char **argv)
 
 	restore_kbd(&u);
 	close(u.kbdfd);
+	ui_plots_clear(&u);
 	vec_env_destroy(&u.env);
 	vec_node_destroy(u.graph);
 	for (int i = 0; i < u.line_count; i++)
