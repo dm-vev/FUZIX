@@ -1079,6 +1079,57 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 		goto fail;
 	}
 
+	if (!strcmp(name, "qr")) {
+		if (argc != 1 || args[0].kind != VEC_VALUE_MATRIX) {
+			snprintf(err, errsz, "eval: qr(A)");
+			goto fail;
+		}
+		const vec_value *A = &args[0];
+
+		double *q = NULL;
+		double *r = NULL;
+		vec_mat_err rc = vec_qr_decompose(A->rows, A->cols, A->mat, &q, &r);
+		if (rc == VEC_MAT_ERR_NOMEM) {
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		if (rc == VEC_MAT_ERR_SINGULAR) {
+			snprintf(err, errsz, "eval: qr: rank deficient");
+			goto fail;
+		}
+		if (rc != VEC_MAT_OK) {
+			snprintf(err, errsz, "eval: invalid matrix");
+			goto fail;
+		}
+
+		size_t qn = (size_t)A->rows * (size_t)A->cols;
+		double *qret = qn ? malloc(sizeof(qret[0]) * qn) : NULL;
+		if (qn && !qret) {
+			free(q);
+			free(r);
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		if (qn)
+			memcpy(qret, q, sizeof(qret[0]) * qn);
+
+		if (vec_env_set_var(e, "_R", vec_value_matrix(A->cols, A->cols, r)) != 0) {
+			free(q);
+			free(qret);
+			free(r);
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		if (vec_env_set_var(e, "_Q", vec_value_matrix(A->rows, A->cols, q)) != 0) {
+			free(q);
+			free(qret);
+			snprintf(err, errsz, "eval: out of memory");
+			goto fail;
+		}
+		*out = vec_value_matrix(A->rows, A->cols, qret);
+		goto done;
+	}
+
 	/* Vector builtins (Array helpers). */
 	if (!strcmp(name, "get")) {
 		if (argc != 2) {
