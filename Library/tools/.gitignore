@@ -20,6 +20,7 @@
 /syscall_6502
 /syscall_68000
 /syscall_6809
+/syscall_8070
 /syscall_8080
 /syscall_8086
 /syscall_armm0
