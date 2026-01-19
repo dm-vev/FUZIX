@@ -33,6 +33,7 @@ add_executable(fuzix
 	devrd_psram.c
 	devfb.c
 	devaudio_stream.c
+	devaudio_pcm.c
 	lcdspi.c
 	i2ckbd.c
 	devtty.c
@@ -90,6 +91,7 @@ target_link_libraries(fuzix
 	pico_multicore
 	hardware_flash
 	hardware_dma
+	hardware_pwm
 	hardware_pio
 	hardware_spi
 	hardware_i2c
