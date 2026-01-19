@@ -34,7 +34,9 @@ endif
 
 include ../../../version.mk
 
-build/fuzix.elf: ../../version.c build/Makefile
+PLATFORM_DEPS = $(wildcard *.c *.h *.S *.pio *.cmake)
+
+build/fuzix.elf: ../../version.c build/Makefile $(PLATFORM_DEPS)
 	$(MAKE) -C build
 
 ../../version.c:
