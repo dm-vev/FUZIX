@@ -10,6 +10,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+static double trunc_d(double x)
+{
+	if (x < 0)
+		return ceil(x);
+	return floor(x);
+}
+
 static vec_node *expand_owned(vec_node *n);
 
 static vec_node *expand_owned(vec_node *n)
@@ -118,7 +125,7 @@ static vec_node *expand_owned(vec_node *n)
 		if (op == '^') {
 			if (right->kind == VEC_NODE_NUMBER) {
 				double expf = vec_number_float64(right->u.number);
-				if (expf == trunc(expf)) {
+				if (expf == trunc_d(expf)) {
 					int pow = (int)expf;
 					if (pow >= 0 && pow <= 12) {
 						if (left->kind == VEC_NODE_BINARY && (left->u.binary.op == '+' || left->u.binary.op == '-')) {
@@ -300,4 +307,3 @@ vec_node *vec_node_taylor_series(vec_env *e, const vec_node *expr, const char *v
 	vec_node_destroy(fk);
 	return vec_node_simplify_owned(out);
 }
-

@@ -8,6 +8,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+static double trunc_d(double x)
+{
+	if (x < 0)
+		return ceil(x);
+	return floor(x);
+}
+
 static int rat_is_zero(vec_rat a) { return a.num == 0; }
 static vec_rat rat_zero(void) { return vec_rat_int(0); }
 static vec_rat rat_one(void) { return vec_rat_int(1); }
@@ -22,7 +29,7 @@ static int rat_from_number(vec_number n, vec_rat *out)
 		return 1;
 	}
 	double f = n.f;
-	if (isnan(f) || isinf(f) || f != trunc(f))
+	if (isnan(f) || isinf(f) || f != trunc_d(f))
 		return 0;
 	if (f < (double)INT64_MIN || f > (double)INT64_MAX)
 		return 0;
@@ -429,7 +436,7 @@ static int poly_from_node(vec_env *e, const vec_node *ex, const char *var_name,
 				return 0;
 			}
 			double expf = vec_number_float64(ex->u.binary.right->u.number);
-			if (isnan(expf) || isinf(expf) || expf != trunc(expf)) {
+			if (isnan(expf) || isinf(expf) || expf != trunc_d(expf)) {
 				vec_poly_rat_destroy(&a);
 				vec_poly_rat_destroy(&b);
 				return 0;
@@ -734,4 +741,3 @@ vec_node *vec_poly_rat_to_expr_horner(const vec_poly_rat *p, const char *var_nam
 	vec_node_destroy(x);
 	return ex;
 }
-

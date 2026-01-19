@@ -9,6 +9,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+static double trunc_d(double x)
+{
+	if (x < 0)
+		return ceil(x);
+	return floor(x);
+}
+
 static int mul_size(size_t a, size_t b, size_t *out)
 {
 	if (!out)
@@ -339,13 +346,13 @@ static int poly_from_node(vec_env *e, const vec_node *ex, const char *var_name,
 				vec_poly_destroy(&a);
 				vec_poly_destroy(&b);
 				return 0;
-			}
-			double expf = vec_number_float64(ex->u.binary.right->u.number);
-			if (isnan(expf) || isinf(expf) || expf != trunc(expf)) {
-				vec_poly_destroy(&a);
-				vec_poly_destroy(&b);
-				return 0;
-			}
+				}
+				double expf = vec_number_float64(ex->u.binary.right->u.number);
+				if (isnan(expf) || isinf(expf) || expf != trunc_d(expf)) {
+					vec_poly_destroy(&a);
+					vec_poly_destroy(&b);
+					return 0;
+				}
 			int exp = (int)expf;
 			if (exp < 0 || exp > 64) {
 				vec_poly_destroy(&a);
