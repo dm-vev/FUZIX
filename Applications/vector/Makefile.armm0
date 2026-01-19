@@ -11,6 +11,7 @@ SRCS = \
 	vec_draw.c \
 	vec_keys.c \
 	vec_lexer.c \
+	vec_matrix.c \
 	vec_number.c \
 	vec_parser.c \
 	vec_plot.c \
