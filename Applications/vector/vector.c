@@ -1,3 +1,4 @@
+#include "vec_cas.h"
 #include "vec_draw.h"
 #include "vec_env.h"
 #include "vec_eval.h"
@@ -246,6 +247,134 @@ static void ui_append_line(struct ui_state *u, const char *s)
 	u->lines[u->line_count++] = dup;
 }
 
+static const char *ui_format_value(struct ui_state *u, const vec_value *v, char *buf, size_t bufsz)
+{
+	if (!u || !v || !buf || bufsz == 0)
+		return "";
+	buf[0] = 0;
+
+	switch (v->kind) {
+	case VEC_VALUE_EXPR:
+		if (v->expr) {
+			(void)vec_node_to_string(v->expr, buf, bufsz);
+			return buf;
+		}
+		return "<expr>";
+	case VEC_VALUE_COMPLEX: {
+		double re = v->c.re;
+		double im = v->c.im;
+		if (im == 0) {
+			(void)vec_number_string(vec_float(re), u->env.prec, buf, bufsz);
+			return buf;
+		}
+		if (re == 0) {
+			char imbuf[64];
+			(void)vec_number_string(vec_float(im), u->env.prec, imbuf, sizeof(imbuf));
+			snprintf(buf, bufsz, "%si", imbuf);
+			return buf;
+		}
+
+		char rebuf[64], imbuf[64];
+		(void)vec_number_string(vec_float(re), u->env.prec, rebuf, sizeof(rebuf));
+		(void)vec_number_string(vec_float(im), u->env.prec, imbuf, sizeof(imbuf));
+		if (im > 0 && imbuf[0] != '+') {
+			char tmp[64];
+			snprintf(tmp, sizeof(tmp), "+%s", imbuf);
+			snprintf(imbuf, sizeof(imbuf), "%s", tmp);
+		}
+		snprintf(buf, bufsz, "%s%si", rebuf, imbuf);
+		return buf;
+	}
+	case VEC_VALUE_ARRAY:
+		if (!v->len)
+			return "[]";
+		{
+			double min = v->arr[0];
+			double max = v->arr[0];
+			for (size_t i = 1; i < v->len; i++) {
+				double x = v->arr[i];
+				if (x < min)
+					min = x;
+				if (x > max)
+					max = x;
+			}
+			char minbuf[24], maxbuf[24];
+			(void)vec_number_string(vec_float(min), 6, minbuf, sizeof(minbuf));
+			(void)vec_number_string(vec_float(max), 6, maxbuf, sizeof(maxbuf));
+			snprintf(buf, bufsz, "[%lu] %s..%s", (unsigned long)v->len, minbuf, maxbuf);
+			return buf;
+		}
+	case VEC_VALUE_MATRIX:
+		if (!v->mat || v->rows <= 0 || v->cols <= 0)
+			return "[?]";
+		{
+			size_t n = (size_t)v->rows * (size_t)v->cols;
+			if (!n)
+				return "[?]";
+			double min = v->mat[0];
+			double max = v->mat[0];
+			for (size_t i = 1; i < n; i++) {
+				double x = v->mat[i];
+				if (x < min)
+					min = x;
+				if (x > max)
+					max = x;
+			}
+			char minbuf[24], maxbuf[24];
+			(void)vec_number_string(vec_float(min), 6, minbuf, sizeof(minbuf));
+			(void)vec_number_string(vec_float(max), 6, maxbuf, sizeof(maxbuf));
+			snprintf(buf, bufsz, "[%dx%d] %s..%s", v->rows, v->cols, minbuf, maxbuf);
+			return buf;
+		}
+	case VEC_VALUE_NUMBER:
+	default:
+		return vec_number_string(v->num, u->env.prec, buf, bufsz);
+	}
+}
+
+static const char *ui_value_edit_string(struct ui_state *u, const vec_value *v, char *buf, size_t bufsz)
+{
+	if (!u || !v || !buf || bufsz == 0)
+		return "";
+	buf[0] = 0;
+
+	switch (v->kind) {
+	case VEC_VALUE_EXPR:
+		if (v->expr) {
+			(void)vec_node_to_string(v->expr, buf, bufsz);
+			return buf;
+		}
+		return "";
+	case VEC_VALUE_ARRAY:
+		return "";
+	case VEC_VALUE_COMPLEX: {
+		double re = v->c.re;
+		double im = v->c.im;
+		if (im == 0)
+			return vec_number_string(vec_float(re), u->env.prec, buf, bufsz);
+		if (re == 0) {
+			char imbuf[64];
+			(void)vec_number_string(vec_float(im), u->env.prec, imbuf, sizeof(imbuf));
+			snprintf(buf, bufsz, "%s*i", imbuf);
+			return buf;
+		}
+		char rebuf[64], imbuf[64];
+		(void)vec_number_string(vec_float(re), u->env.prec, rebuf, sizeof(rebuf));
+		if (im < 0) {
+			(void)vec_number_string(vec_float(-im), u->env.prec, imbuf, sizeof(imbuf));
+			snprintf(buf, bufsz, "%s-%s*i", rebuf, imbuf);
+		} else {
+			(void)vec_number_string(vec_float(im), u->env.prec, imbuf, sizeof(imbuf));
+			snprintf(buf, bufsz, "%s+%s*i", rebuf, imbuf);
+		}
+		return buf;
+	}
+	case VEC_VALUE_NUMBER:
+	default:
+		return vec_number_string(v->num, u->env.prec, buf, bufsz);
+	}
+}
+
 static void ui_history_push(struct ui_state *u, const char *s)
 {
 	if (!u || !s || !*s)
@@ -356,12 +485,8 @@ static void ui_start_edit_var(struct ui_state *u, const char *name, const vec_va
 		return;
 
 	snprintf(u->edit_var, sizeof(u->edit_var), "%s", name);
-	if (v && v->kind == VEC_VALUE_NUMBER) {
-		char buf[64];
-		ui_set_input(u, vec_number_string(v->num, u->env.prec, buf, sizeof(buf)));
-	} else {
-		ui_set_input(u, "");
-	}
+	char buf[160];
+	ui_set_input(u, v ? ui_value_edit_string(u, v, buf, sizeof(buf)) : "");
 	ui_set_message(u, "Enter apply | Esc cancel");
 }
 
@@ -657,10 +782,9 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 				continue;
 			}
 			{
-				char buf[64];
+				char buf[160];
 				char out[128];
-				snprintf(out, sizeof(out), "%s = %s", a->var_name,
-					 vec_number_string(v.num, u->env.prec, buf, sizeof(buf)));
+				snprintf(out, sizeof(out), "%s = %s", a->var_name, ui_format_value(u, &v, buf, sizeof(buf)));
 				ui_append_line(u, out);
 			}
 			continue;
@@ -695,11 +819,9 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 			}
 			continue;
 		}
-		if (v.kind == VEC_VALUE_NUMBER) {
-			char buf[64];
-			ui_append_line(u, vec_number_string(v.num, u->env.prec, buf, sizeof(buf)));
-		} else {
-			ui_append_line(u, "<value>");
+		{
+			char buf[160];
+			ui_append_line(u, ui_format_value(u, &v, buf, sizeof(buf)));
 		}
 		if (a->expr && vec_node_has_ident(a->expr, "x")) {
 			if (u->graph)
@@ -881,10 +1003,8 @@ static void ui_render_stack(struct ui_state *u)
 	for (vec_var *v = u->env.vars; v && row < u->rows - 1; v = v->next, idx++) {
 		if (idx < u->stack_top)
 			continue;
-		char valbuf[64];
-		const char *val = "<value>";
-		if (v->value.kind == VEC_VALUE_NUMBER)
-			val = vec_number_string(v->value.num, u->env.prec, valbuf, sizeof(valbuf));
+		char valbuf[160];
+		const char *val = ui_format_value(u, &v->value, valbuf, sizeof(valbuf));
 
 		snprintf(line, sizeof(line), "%c %-10s %s", (idx == u->stack_sel) ? '>' : ' ',
 			 v->name ? v->name : "?", val);
