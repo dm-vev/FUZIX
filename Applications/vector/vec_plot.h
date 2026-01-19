@@ -31,4 +31,11 @@ int vec_plot_render_multi(struct vec_fb *fb, int x0, int y0, int w, int h,
 			  double x_min, double x_max, double y_min, double y_max,
 			  char *err, size_t errsz);
 
+int vec_plot_render_3d(struct vec_fb *fb, int x0, int y0, int w, int h,
+		       vec_env *env, const vec_node *expr,
+		       double x_min, double x_max, double y_min, double y_max,
+		       double yaw, double pitch, double zoom,
+		       int color_mode, int show_axes,
+		       char *err, size_t errsz);
+
 #endif
