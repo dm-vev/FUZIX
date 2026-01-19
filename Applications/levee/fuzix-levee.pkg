@@ -1,3 +1,12 @@
+# Generic/ANSI build (used by some platforms, including armm0)
+package  levee
+if-file  levee
+
+f 0755 /bin/levee            levee
+l      /bin/levee            /bin/vi
+f 0644 /usr/man/man1/levee.1 levee.1
+l      /usr/man/man1/levee.1 /usr/man/man1/vi.1
+
 # vt52 version is always built, so put common files with it
 package  levee-vt52
 if-file  levee-vt52
