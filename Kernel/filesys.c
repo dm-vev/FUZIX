@@ -566,7 +566,7 @@ fsptr getdev(uint16_t dev)
 
 bool inline baddev(fsptr dev)
 {
-    return(dev->s_mounted != SMOUNTED);
+    return(dev->s_mounted != SMOUNTED && dev->s_mounted != SMOUNTED_V2);
 }
 
 
@@ -609,7 +609,11 @@ tryagain:
             goto corrupt;
         for(j=0; j < INO_PER_BLOCK; j++) {
             /* Optimisation: add offsetof and use that to reduce blkptr range */
+#ifdef CONFIG_LARGEFS
+            di = blkptr(buf, sizeof(struct fuzix_dinode_v1) * j, sizeof(struct fuzix_dinode_v1));
+#else
             di = blkptr(buf, sizeof(struct dinode) * j, sizeof(struct dinode));
+#endif
             if(!(di->i_mode || di->i_nlink))
                 dev->s_inode[k++] = INO_PER_BLOCK * (blk - 2) + j;
             if(k == FILESYS_TABSIZE) {
@@ -696,9 +700,31 @@ blkno_t blk_alloc(uint16_t devno)
         buf = bread(devno, newno, 0);
         if (buf == NULL)
             goto corrupt;
+#ifdef CONFIG_LARGEFS
+        if (dev->s_mounted == SMOUNTED_V2) {
+            struct {
+                uint16_t nfree;
+                uint16_t pad;
+                uint32_t free[FILESYS_TABSIZE];
+            } fl;
+            blktok(&fl, buf, 0, sizeof(fl));
+            dev->s_nfree = fl.nfree;
+            for (uint_fast8_t i = 0; i < FILESYS_TABSIZE; i++)
+                dev->s_free[i] = fl.free[i];
+        } else {
+            struct {
+                uint16_t nfree;
+                uint16_t free[FILESYS_TABSIZE];
+            } fl;
+            blktok(&fl, buf, 0, sizeof(fl));
+            dev->s_nfree = fl.nfree;
+            for (uint_fast8_t i = 0; i < FILESYS_TABSIZE; i++)
+                dev->s_free[i] = fl.free[i];
+        }
+#else
         blktok(&dev->s_nfree, buf, 0,
-            sizeof(int) + FILESYS_TABSIZE * sizeof(blkno_t));
-        /* This assumes no padding: this is an UZI era assumption */
+            sizeof(dev->s_nfree) + FILESYS_TABSIZE * sizeof(dev->s_free[0]));
+#endif
         brelse(buf);
     }
 
@@ -752,9 +778,33 @@ void blk_free(uint16_t devno, blkno_t blk)
     if(dev->s_nfree == FILESYS_TABSIZE) {
         buf = bread(devno, blk, 1);
         if (buf) {
-            /* nfree must directly preceed the blocks and without padding. That's
-               the assumption UZI always had */
-            blkfromk(&dev->s_nfree, buf, 0, sizeof(int) + 50 * sizeof(blkno_t));
+            /* On-disk free list block format is versioned (v1/v2). */
+#ifdef CONFIG_LARGEFS
+            if (dev->s_mounted == SMOUNTED_V2) {
+                struct {
+                    uint16_t nfree;
+                    uint16_t pad;
+                    uint32_t free[FILESYS_TABSIZE];
+                } fl;
+                fl.nfree = dev->s_nfree;
+                fl.pad = 0;
+                for (uint_fast8_t i = 0; i < FILESYS_TABSIZE; i++)
+                    fl.free[i] = dev->s_free[i];
+                blkfromk(&fl, buf, 0, sizeof(fl));
+            } else {
+                struct {
+                    uint16_t nfree;
+                    uint16_t free[FILESYS_TABSIZE];
+                } fl;
+                fl.nfree = dev->s_nfree;
+                for (uint_fast8_t i = 0; i < FILESYS_TABSIZE; i++)
+                    fl.free[i] = (uint16_t)dev->s_free[i];
+                blkfromk(&fl, buf, 0, sizeof(fl));
+            }
+#else
+            blkfromk(&dev->s_nfree, buf, 0,
+                     sizeof(dev->s_nfree) + FILESYS_TABSIZE * sizeof(dev->s_free[0]));
+#endif
             bawrite(buf);
             dev->s_nfree = 0;
         } else
@@ -929,65 +979,323 @@ uint16_t devnum(inoptr ino)
  *	very important so that they end up on the freelist in the
  *	order we want to allocate them.
  */
-int f_trunc_blocks(register inoptr ino, uint16_t nblock)
+static uint16_t fs_indir_get16(bufptr bp, uint16_t idx)
+{
+    uint16_t v;
+    blktok(&v, bp, idx * sizeof(uint16_t), sizeof(v));
+    return v;
+}
+
+static void fs_indir_set16(bufptr bp, uint16_t idx, uint16_t v)
+{
+    blkfromk(&v, bp, idx * sizeof(uint16_t), sizeof(v));
+}
+
+#ifdef CONFIG_LARGEFS
+static uint32_t fs_indir_get32(bufptr bp, uint16_t idx)
+{
+    uint32_t v;
+    blktok(&v, bp, idx * sizeof(uint32_t), sizeof(v));
+    return v;
+}
+
+static void fs_indir_set32(bufptr bp, uint16_t idx, uint32_t v)
+{
+    blkfromk(&v, bp, idx * sizeof(uint32_t), sizeof(v));
+}
+#endif
+
+static void fs_free_data_block(uint16_t dev, blkno_t blk)
+{
+    if (!blk)
+        return;
+#ifdef CONFIG_TRIM
+    d_ioctl(dev, HDIO_TRIM, (void *)&blk);
+#endif
+    blk_free(dev, blk);
+}
+
+static void fs_v1_free_subtree(uint16_t dev, blkno_t blk, uint_fast8_t level)
+{
+    if (!blk)
+        return;
+
+    if (level == 0) {
+        fs_free_data_block(dev, blk);
+        return;
+    }
+
+    bufptr buf = bread(dev, blk, 0);
+    if (buf == NULL) {
+        corrupt_fs(dev);
+        return;
+    }
+
+    for (int16_t i = 255; i >= 0; i--) {
+        uint16_t child = fs_indir_get16(buf, (uint16_t)i);
+        if (child)
+            fs_v1_free_subtree(dev, child, level - 1);
+    }
+    brelse(buf);
+    fs_free_data_block(dev, blk);
+}
+
+static bool fs_v1_trunc_indirect(uint16_t dev, blkno_t blk, uint_fast8_t level, blkno_t keep)
+{
+    const blkno_t nindir = 256;
+    const blkno_t subtree = (level == 2) ? nindir : 1;
+    bool modified = false;
+    bool any = false;
+
+    if (!blk)
+        return true;
+
+    if (keep >= nindir * subtree)
+        return false;
+
+    bufptr buf = bread(dev, blk, 0);
+    if (buf == NULL) {
+        corrupt_fs(dev);
+        return false;
+    }
+
+    for (int16_t i = (int16_t)nindir - 1; i >= 0; i--) {
+        blkno_t start = (blkno_t)i * subtree;
+        uint16_t child = fs_indir_get16(buf, (uint16_t)i);
+
+        if (start >= keep) {
+            if (child) {
+                fs_v1_free_subtree(dev, child, level - 1);
+                fs_indir_set16(buf, (uint16_t)i, 0);
+                modified = true;
+            }
+            continue;
+        }
+
+        if (start + subtree > keep) {
+            if (child) {
+                if (fs_v1_trunc_indirect(dev, child, level - 1, keep - start)) {
+                    fs_indir_set16(buf, (uint16_t)i, 0);
+                    modified = true;
+                } else {
+                    any = true;
+                }
+            }
+            continue;
+        }
+
+        if (child)
+            any = true;
+    }
+
+    if (modified)
+        bawrite(buf);
+    else
+        brelse(buf);
+
+    if (!any) {
+        fs_free_data_block(dev, blk);
+        return true;
+    }
+
+    return false;
+}
+
+#ifdef CONFIG_LARGEFS
+static void fs_v2_free_subtree(uint16_t dev, blkno_t blk, uint_fast8_t level)
+{
+    if (!blk)
+        return;
+
+    if (level == 0) {
+        fs_free_data_block(dev, blk);
+        return;
+    }
+
+    bufptr buf = bread(dev, blk, 0);
+    if (buf == NULL) {
+        corrupt_fs(dev);
+        return;
+    }
+
+    for (int16_t i = 127; i >= 0; i--) {
+        uint32_t child = fs_indir_get32(buf, (uint16_t)i);
+        if (child)
+            fs_v2_free_subtree(dev, child, level - 1);
+    }
+    brelse(buf);
+    fs_free_data_block(dev, blk);
+}
+
+static bool fs_v2_trunc_indirect(uint16_t dev, blkno_t blk, uint_fast8_t level, blkno_t keep)
+{
+    const blkno_t nindir = 128;
+    const blkno_t subtree = (level == 3) ? (nindir * nindir) : (level == 2) ? nindir : 1;
+    bool modified = false;
+    bool any = false;
+
+    if (!blk)
+        return true;
+
+    if (keep >= nindir * subtree)
+        return false;
+
+    bufptr buf = bread(dev, blk, 0);
+    if (buf == NULL) {
+        corrupt_fs(dev);
+        return false;
+    }
+
+    for (int16_t i = (int16_t)nindir - 1; i >= 0; i--) {
+        blkno_t start = (blkno_t)i * subtree;
+        uint32_t child = fs_indir_get32(buf, (uint16_t)i);
+
+        if (start >= keep) {
+            if (child) {
+                fs_v2_free_subtree(dev, child, level - 1);
+                fs_indir_set32(buf, (uint16_t)i, 0);
+                modified = true;
+            }
+            continue;
+        }
+
+        if (start + subtree > keep) {
+            if (child) {
+                if (fs_v2_trunc_indirect(dev, child, level - 1, keep - start)) {
+                    fs_indir_set32(buf, (uint16_t)i, 0);
+                    modified = true;
+                } else {
+                    any = true;
+                }
+            }
+            continue;
+        }
+
+        if (child)
+            any = true;
+    }
+
+    if (modified)
+        bawrite(buf);
+    else
+        brelse(buf);
+
+    if (!any) {
+        fs_free_data_block(dev, blk);
+        return true;
+    }
+
+    return false;
+}
+#endif
+
+int f_trunc_blocks(register inoptr ino, blkno_t nblock)
 {
     register uint16_t dev;
-    register int_fast8_t j;
-    uint16_t map1 = 0;
-    uint16_t map2 = 0;
 
     if (ino->c_flags & CRDONLY) {
         udata.u_error = EROFS;
         return -1;
     }
-
-    /* Block offsets are
-        0-17 direct
-        18 256 blocks (18-273)
-        19 256 * 256 blocks (274-65810)
-
-        (We only allow 65535 block offset in order to keep a lot of stuff
-         uint16_t - FIXME to fix u writei())
-
-        We don't support triple indirect blocks.
-
-        When we are called nblock is the number of blocks that will
-        remain in the file when we truncate it
-
-        We set map1 to the number of blocks we must purge for single
-        indirect. We set map2 for the number of blocks we must purge
-        of double indirect.
-
-        freeblk frees full subblocks above the block passed, and then frees
-        blocks >> 8 on the last iteration to partially clear the last set
-    */
-
-    if (nblock > 17 && nblock < 274)
-        map1 = (nblock - 18) << 8;
-    else if (nblock > 273)
-        map2 = nblock - 273;
     dev = ino->c_dev;
 
-    /* FIXME: ideally zero the indirect pointers before we write the
-       free lists */
+    /* Dispatch by filesystem version (v1/v2). */
+#ifdef CONFIG_LARGEFS
+    if (fs_tab[ino->c_super].m_fs.s_mounted == SMOUNTED_V2) {
+        const blkno_t ndirect = 7;
+        const blkno_t nindir = 128;
+        const blkno_t nindir2 = nindir * nindir;
 
-    /* First deallocate the double indirect blocks */
-    freeblk(dev, ino->c_node.i_addr[19], 2, map2);
-    if (map2)
-        ino->c_node.i_addr[19] = 0;
+        /* Triple indirect (level 3). */
+        if (nblock <= ndirect + nindir + nindir2) {
+            if (ino->c_node.i_addr[9]) {
+                fs_v2_free_subtree(dev, ino->c_node.i_addr[9], 3);
+                ino->c_node.i_addr[9] = 0;
+            }
+        } else {
+            blkno_t keep = nblock - (ndirect + nindir + nindir2);
+            if (ino->c_node.i_addr[9] &&
+                fs_v2_trunc_indirect(dev, ino->c_node.i_addr[9], 3, keep)) {
+                ino->c_node.i_addr[9] = 0;
+            }
+        }
 
-    /* Also deallocate the indirect blocks */
-    freeblk(dev, ino->c_node.i_addr[18], 1, map1);
-    if (map1 == 0 && map2 == 0)	/* ???? should this just be if map1 */
-        ino->c_node.i_addr[18] = 0;
+        /* Double indirect (level 2). */
+        if (nblock <= ndirect + nindir) {
+            if (ino->c_node.i_addr[8]) {
+                fs_v2_free_subtree(dev, ino->c_node.i_addr[8], 2);
+                ino->c_node.i_addr[8] = 0;
+            }
+        } else if (nblock <= ndirect + nindir + nindir2) {
+            blkno_t keep = nblock - (ndirect + nindir);
+            if (ino->c_node.i_addr[8] &&
+                fs_v2_trunc_indirect(dev, ino->c_node.i_addr[8], 2, keep)) {
+                ino->c_node.i_addr[8] = 0;
+            }
+        }
 
-    /* Finally, free the direct blocks */
-    /* FIXME: use pointers for efficiency ? */
-    /* At this point nblock is definitely < 0x8000 so forcing a signed
-       compare does what we want */
-    for(j = 17; j >= (int)nblock; --j) {
-        freeblk(dev, ino->c_node.i_addr[j], 0, 0);
-        ino->c_node.i_addr[j] = 0;
+        /* Single indirect (level 1). */
+        if (nblock <= ndirect) {
+            if (ino->c_node.i_addr[7]) {
+                fs_v2_free_subtree(dev, ino->c_node.i_addr[7], 1);
+                ino->c_node.i_addr[7] = 0;
+            }
+        } else if (nblock <= ndirect + nindir) {
+            blkno_t keep = nblock - ndirect;
+            if (ino->c_node.i_addr[7] &&
+                fs_v2_trunc_indirect(dev, ino->c_node.i_addr[7], 1, keep)) {
+                ino->c_node.i_addr[7] = 0;
+            }
+        }
+
+        /* Direct blocks. */
+        if (nblock < ndirect) {
+            for (int16_t j = (int16_t)ndirect - 1; j >= (int16_t)nblock; --j) {
+                fs_free_data_block(dev, ino->c_node.i_addr[j]);
+                ino->c_node.i_addr[j] = 0;
+            }
+        }
+    } else
+#endif
+    {
+        const blkno_t ndirect = 18;
+        const blkno_t nindir = 256;
+
+        /* Double indirect (level 2). */
+        if (nblock <= ndirect + nindir) {
+            if (ino->c_node.i_addr[19]) {
+                fs_v1_free_subtree(dev, ino->c_node.i_addr[19], 2);
+                ino->c_node.i_addr[19] = 0;
+            }
+        } else {
+            blkno_t keep = nblock - (ndirect + nindir);
+            if (ino->c_node.i_addr[19] &&
+                fs_v1_trunc_indirect(dev, ino->c_node.i_addr[19], 2, keep)) {
+                ino->c_node.i_addr[19] = 0;
+            }
+        }
+
+        /* Single indirect (level 1). */
+        if (nblock <= ndirect) {
+            if (ino->c_node.i_addr[18]) {
+                fs_v1_free_subtree(dev, ino->c_node.i_addr[18], 1);
+                ino->c_node.i_addr[18] = 0;
+            }
+        } else if (nblock <= ndirect + nindir) {
+            blkno_t keep = nblock - ndirect;
+            if (ino->c_node.i_addr[18] &&
+                fs_v1_trunc_indirect(dev, ino->c_node.i_addr[18], 1, keep)) {
+                ino->c_node.i_addr[18] = 0;
+            }
+        }
+
+        /* Direct blocks. */
+        if (nblock < ndirect) {
+            for (int16_t j = (int16_t)ndirect - 1; j >= (int16_t)nblock; --j) {
+                fs_free_data_block(dev, ino->c_node.i_addr[j]);
+                ino->c_node.i_addr[j] = 0;
+            }
+        }
     }
 
     ino->c_flags |= CDIRTY;
@@ -1005,82 +1313,6 @@ int f_trunc(regptr inoptr ino)
      ino->c_node.i_size = 0;
      return 0;
 }
-
-/* Companion function to f_trunc().
-
-   This is the one case where we can't hide the difference between an internal
-   and external buffer cache cleanly. The external one has a somewhat higher
-   overhead (we could mitigate it by batching perhaps) and also size.
-
-   This is annoying and it would be nice one day to find a clean solution */
-
-#ifdef CONFIG_BLKBUF_EXTERNAL
-void freeblk(uint16_t dev, blkno_t blk, uint_fast8_t level, uint16_t nblock)
-{
-    struct blkbuf *buf;
-    regptr blkno_t *bn;
-    int16_t j;
-    int_fast8_t nblock1 = nblock >> 8;
-
-    if(!blk)
-        return;
-
-    if(level){
-        buf = bread(dev, blk, 0);
-        if (buf == NULL) {
-            corrupt_fs(dev);
-            return;
-        }
-        for(j = BLKSIZE / 2 - 1; j >= nblock1; --j) {
-            uint8_t b = 0;
-            if (j == nblock1)
-                b = nblock & 0xFF;
-            blktok(&bn, buf, j * sizeof(blkno_t), sizeof(blkno_t));
-            freeblk(dev, bn[j], level - 1, b);
-        }
-        brelse(buf);
-    }
-#ifdef CONFIG_TRIM
-    d_ioctl(dev, HDIO_TRIM, (void*)&blk);
-#endif
-    blk_free(dev, blk);
-}
-
-#else
-
-void freeblk(uint16_t dev, blkno_t blk, uint_fast8_t level, uint16_t nblock)
-{
-    struct blkbuf *buf;
-    regptr blkno_t *bn;
-    int16_t j;
-    int_fast8_t nblock1 = nblock >> 8;
-
-    if(!blk)
-        return;
-
-    if(level){
-        buf = bread(dev, blk, 0);
-        if (buf == NULL) {
-            corrupt_fs(dev);
-            return;
-        }
-        bn = blkptr(buf, 0, BLKSIZE);
-        for(j = BLKSIZE / 2 - 1; j >= 0; --j) {
-            /* When we hit nblock1 we are doing the final partial clear, so
-               only tell the child freeblk to do a partial clear */
-            uint_fast8_t b = 0;
-            if (j == nblock1)
-                b = nblock & 0xFF;
-            freeblk(dev, bn[j], level-1, b);
-        }
-        brelse(buf);
-    }
-#ifdef CONFIG_TRIM
-    d_ioctl(dev, HDIO_TRIM, (void*)&blk);
-#endif
-    blk_free(dev, blk);
-}
-#endif
 
 /* Validblk panics if the given block number is not a valid
  *  data block for the given device.
@@ -1241,7 +1473,56 @@ struct mount *fmount(uint16_t dev, register inoptr ino, uint16_t flags)
     buf = bread(dev, 1, 0);
     if (buf == NULL)
         return NULL;
+
+#ifdef CONFIG_LARGEFS
+    /* Versioned superblock decode (v1/v2) */
+    {
+        uint16_t magic16;
+        blktok(&magic16, buf, 0, sizeof(magic16));
+
+        if (magic16 == SMOUNTED) {
+            struct fuzix_filesys_v1 sb;
+            blktok(&sb, buf, 0, sizeof(sb));
+            fp->s_mounted = sb.s_mounted;
+            fp->s_isize = sb.s_isize;
+            fp->s_fsize = sb.s_fsize;
+            fp->s_nfree = sb.s_nfree;
+            for (uint_fast8_t i = 0; i < FILESYS_TABSIZE; i++)
+                fp->s_free[i] = sb.s_free[i];
+            fp->s_ninode = sb.s_ninode;
+            memcpy(fp->s_inode, sb.s_inode, sizeof(fp->s_inode));
+            fp->s_fmod = sb.s_fmod;
+            fp->s_timeh = sb.s_timeh;
+            fp->s_time = sb.s_time;
+            fp->s_tfree = sb.s_tfree;
+            fp->s_tinode = sb.s_tinode;
+            fp->s_shift = sb.s_shift;
+        } else if (magic16 == SMOUNTED_V2) {
+            struct fuzix_filesys_v2 sb;
+            blktok(&sb, buf, 0, sizeof(sb));
+            fp->s_mounted = sb.s_mounted;
+            fp->s_isize = sb.s_isize;
+            fp->s_fsize = sb.s_fsize;
+            fp->s_nfree = sb.s_nfree;
+            for (uint_fast8_t i = 0; i < FILESYS_TABSIZE; i++)
+                fp->s_free[i] = sb.s_free[i];
+            fp->s_ninode = sb.s_ninode;
+            memcpy(fp->s_inode, sb.s_inode, sizeof(fp->s_inode));
+            fp->s_fmod = sb.s_fmod;
+            fp->s_timeh = sb.s_timeh;
+            fp->s_time = sb.s_time;
+            fp->s_tfree = sb.s_tfree;
+            fp->s_tinode = sb.s_tinode;
+            fp->s_shift = sb.s_shift;
+        } else {
+            udata.u_error = EINVAL;
+            brelse(buf);
+            return NULL;
+        }
+    }
+#else
     blktok(fp, buf, 0, sizeof(struct filesys));
+#endif
     brelse(buf);
 
 #ifdef DEBUG
@@ -1250,7 +1531,8 @@ struct mount *fmount(uint16_t dev, register inoptr ino, uint16_t flags)
 #endif
 
     /* See if there really is a filesystem on the device */
-    if(fp->s_mounted != SMOUNTED  ||  fp->s_isize >= fp->s_fsize ||
+    if((fp->s_mounted != SMOUNTED && fp->s_mounted != SMOUNTED_V2) ||
+        fp->s_isize >= fp->s_fsize ||
         fp->s_shift > FS_MAX_SHIFT) {
         udata.u_error = EINVAL;
         return NULL;
@@ -1311,4 +1593,3 @@ arg_t unlinki(inoptr ino, inoptr pino, uint8_t *fname)
 	setftime(ino, C_TIME);
 	return (0);
 }
-

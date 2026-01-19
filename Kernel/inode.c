@@ -211,15 +211,12 @@ void writei(regptr inoptr ino, uint_fast8_t flag)
 					return;
 			}
 			pblk = mapcalc(ino, &amount, 0);
-
-                        if (HIBYTE32(udata.u_offset) & BLKOVERSIZE32) {
-                                udata.u_error = EFBIG;
-                                ssig(udata.u_ptab, SIGXFSZ);
-                                break;
-                        }
-
-			if (pblk == NULLBLK)
-				break;	/* No space to make more blocks */
+			if (pblk == NULLBLK) {
+				/* No space, or file too large for this filesystem. */
+				if (udata.u_error == EFBIG)
+					ssig(udata.u_ptab, SIGXFSZ);
+				break;
+			}
 
 			/* If we are writing an entire block, we don't care
 			 * about its previous contents
@@ -401,7 +398,51 @@ void sync(void)
 				m->m_fs.s_fmod = FMOD_CLEAN;
 			buf = bread(m->m_dev, 1, 1);
 			if (buf) {
+				/* Versioned superblock encoding (v1/v2). */
+#ifdef CONFIG_LARGEFS
+				if (m->m_fs.s_mounted == SMOUNTED) {
+					struct fuzix_filesys_v1 sb;
+					memset(&sb, 0, sizeof(sb));
+					sb.s_mounted = m->m_fs.s_mounted;
+					sb.s_isize = (uint16_t)m->m_fs.s_isize;
+					sb.s_fsize = (uint16_t)m->m_fs.s_fsize;
+					sb.s_nfree = m->m_fs.s_nfree;
+					for (uint_fast8_t i = 0; i < FILESYS_TABSIZE; i++)
+						sb.s_free[i] = (uint16_t)m->m_fs.s_free[i];
+					sb.s_ninode = m->m_fs.s_ninode;
+					memcpy(sb.s_inode, m->m_fs.s_inode, sizeof(sb.s_inode));
+					sb.s_fmod = m->m_fs.s_fmod;
+					sb.s_timeh = m->m_fs.s_timeh;
+					sb.s_time = m->m_fs.s_time;
+					sb.s_tfree = (uint16_t)m->m_fs.s_tfree;
+					sb.s_tinode = m->m_fs.s_tinode;
+					sb.s_shift = m->m_fs.s_shift;
+					blkfromk(&sb, buf, 0, sizeof(sb));
+				} else if (m->m_fs.s_mounted == SMOUNTED_V2) {
+					struct fuzix_filesys_v2 sb;
+					memset(&sb, 0, sizeof(sb));
+					sb.s_mounted = m->m_fs.s_mounted;
+					sb.s_isize = m->m_fs.s_isize;
+					sb.s_fsize = m->m_fs.s_fsize;
+					sb.s_nfree = m->m_fs.s_nfree;
+					for (uint_fast8_t i = 0; i < FILESYS_TABSIZE; i++)
+						sb.s_free[i] = m->m_fs.s_free[i];
+					sb.s_ninode = m->m_fs.s_ninode;
+					memcpy(sb.s_inode, m->m_fs.s_inode, sizeof(sb.s_inode));
+					sb.s_fmod = m->m_fs.s_fmod;
+					sb.s_timeh = m->m_fs.s_timeh;
+					sb.s_time = m->m_fs.s_time;
+					sb.s_tfree = m->m_fs.s_tfree;
+					sb.s_tinode = m->m_fs.s_tinode;
+					sb.s_shift = m->m_fs.s_shift;
+					blkfromk(&sb, buf, 0, sizeof(sb));
+				} else {
+					/* Unknown/invalid superblock magic: don't write garbage. */
+					corrupt_fs(m->m_dev);
+				}
+#else
 				blkfromk(&m->m_fs, buf, 0, sizeof(struct filesys));
+#endif
 				bfree(buf, 2);
 			}
 		}

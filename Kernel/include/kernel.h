@@ -191,8 +191,6 @@ typedef uint16_t blkno_t;    /* Can have 65536 512-byte blocks in filesystem */
 #include "blk512.h"
 #endif
 
-#define BLKOVERSIZE32	0xFE	/* Bits 25+ mean we exceeded the file size */
-
 /* State of the block. We have some free bits here if we need them */
 #define BF_FREE		0
 #define BF_BUSY		1
@@ -404,8 +402,13 @@ typedef struct direct {
 #define FILESYS_TABSIZE 50
 typedef struct filesys { /* note: exists in mem and on disk */
     uint16_t      s_mounted;
+#ifdef CONFIG_LARGEFS
+    uint32_t      s_isize;
+    uint32_t      s_fsize;
+#else
     uint16_t      s_isize;
     uint16_t      s_fsize;
+#endif
     uint16_t      s_nfree;
     blkno_t       s_free[FILESYS_TABSIZE];
     int16_t       s_ninode;
@@ -1103,9 +1106,8 @@ extern void i_deref(inoptr ino);
 extern void corrupt_fs(uint16_t devno);
 extern void wr_inode(inoptr ino);
 extern bool isdevice(inoptr ino);
-extern int f_trunc_blocks(inoptr ino, uint16_t nblock);
+extern int f_trunc_blocks(inoptr ino, blkno_t nblock);
 extern int f_trunc(inoptr ino);
-extern void freeblk(uint16_t dev, blkno_t blk, uint_fast8_t level, uint16_t nblock);
 extern blkno_t bmap(inoptr ip, blkno_t bn, unsigned int rwflg);
 extern void validblk(uint16_t dev, blkno_t num);
 extern inoptr getinode(uint_fast8_t uindex);

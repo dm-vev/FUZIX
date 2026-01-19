@@ -466,11 +466,23 @@ arg_t _ftruncate(void)
 		return (-1);
 
 	o = &of_tab[udata.u_files[file]];
-	if (n < 0 || (HIBYTE32(n) & BLKOVERSIZE32) ||
-	    O_ACCMODE(o->o_access) == O_RDONLY ||
+	if (n < 0 || O_ACCMODE(o->o_access) == O_RDONLY ||
 	    getmode(ino) != MODE_R(F_REG)) {
 		udata.u_error = EINVAL;
 		return -1;
+	}
+
+	/* Ensure the new size is representable by this filesystem mapping. */
+	{
+		blkno_t maxblocks = 18UL + 256UL + 256UL * 256UL;
+#ifdef CONFIG_LARGEFS
+		if (fs_tab[ino->c_super].m_fs.s_mounted == SMOUNTED_V2)
+			maxblocks = 7UL + 128UL + 128UL * 128UL + 128UL * 128UL * 128UL;
+#endif
+		if (n > 0 && BLOCK((uoff_t)n + BLKSIZE - 1) > maxblocks) {
+			udata.u_error = EFBIG;
+			return -1;
+		}
 	}
 
 	if (n == ino->c_node.i_size)
