@@ -15,6 +15,7 @@ SRCS = \
 	vec_matrix.c \
 	vec_numeric.c \
 	vec_poly.c \
+	vec_poly_rat.c \
 	vec_number.c \
 	vec_parser.c \
 	vec_plot.c \
