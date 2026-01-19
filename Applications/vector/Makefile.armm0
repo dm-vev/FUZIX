@@ -6,6 +6,8 @@ SRCS = \
 	vec_ast.c \
 	vec_env.c \
 	vec_eval.c \
+	vec_fb.c \
+	vec_keys.c \
 	vec_lexer.c \
 	vec_number.c \
 	vec_parser.c \
