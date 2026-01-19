@@ -242,11 +242,11 @@ int vec_numeric_integrate_simpson(vec_env *e, const vec_node *expr, double a, do
 int vec_numeric_interp1(const vec_value *data, double x, double *out_y, char *err, size_t errsz)
 {
 	if (!out_y) {
-		snprintf(err, errsz, "interp: bad args");
+		snprintf(err, errsz, "bad args");
 		return -1;
 	}
 	if (!data) {
-		snprintf(err, errsz, "interp: bad args");
+		snprintf(err, errsz, "bad args");
 		return -1;
 	}
 
@@ -316,4 +316,3 @@ int vec_numeric_interp1(const vec_value *data, double x, double *out_y, char *er
 	snprintf(err, errsz, "expected array or matrix");
 	return -1;
 }
-

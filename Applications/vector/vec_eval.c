@@ -2,6 +2,7 @@
 #include "vec_cas.h"
 #include "vec_linalg.h"
 #include "vec_matrix.h"
+#include "vec_numeric.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -825,20 +826,288 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 		*out = vec_value_number(vec_rat_number(vec_rat_int((a || b) ? 1 : 0)));
 		goto done;
 	}
-	if (!strcmp(name, "not") && argc == 1) {
-		int a;
-		if (value_truthy(&args[0], &a) != 0) {
-			snprintf(err, errsz, "eval: condition must be a number");
+		if (!strcmp(name, "not") && argc == 1) {
+			int a;
+			if (value_truthy(&args[0], &a) != 0) {
+				snprintf(err, errsz, "eval: condition must be a number");
 			goto fail;
 		}
 		*out = vec_value_number(vec_rat_number(vec_rat_int(a ? 0 : 1)));
-		goto done;
-	}
+			goto done;
+		}
 
-	/* Complex helpers. */
-	if (!strcmp(name, "rect") && argc == 2 && args[0].kind == VEC_VALUE_NUMBER && args[1].kind == VEC_VALUE_NUMBER) {
-		double r = vec_number_float64(args[0].num);
-		double phi = vec_number_float64(args[1].num);
+		/* Numeric analysis builtins. */
+		if (!strcmp(name, "newton")) {
+			if (argc < 2 || argc > 4) {
+				snprintf(err, errsz, "eval: newton(expr, x0[, tol[, maxIter]])");
+				goto fail;
+			}
+			if (args[0].kind != VEC_VALUE_EXPR || args[1].kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: newton(expr, x0[, tol[, maxIter]])");
+				goto fail;
+			}
+			double x0 = vec_number_float64(args[1].num);
+			double tol = 1e-9;
+			if (argc >= 3) {
+				if (args[2].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: newton(expr, x0[, tol[, maxIter]])");
+					goto fail;
+				}
+				double v = vec_number_float64(args[2].num);
+				if (v > 0 && !isinf(v) && !isnan(v))
+					tol = v;
+			}
+			int max_iter = 32;
+			if (argc == 4) {
+				if (args[3].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: newton(expr, x0[, tol[, maxIter]])");
+					goto fail;
+				}
+				double it = vec_number_float64(args[3].num);
+				if (isnan(it) || isinf(it) || it != trunc_d(it)) {
+					snprintf(err, errsz, "eval: expected integer");
+					goto fail;
+				}
+				if (it >= 1 && it <= 512)
+					max_iter = (int)it;
+			}
+
+			double root;
+			if (vec_numeric_solve1_newton(e, args[0].expr, x0, tol, max_iter, &root, err, errsz) != 0)
+				goto fail;
+			*out = vec_value_number(vec_float(root));
+			goto done;
+		}
+
+		if (!strcmp(name, "bisection")) {
+			if (argc < 3 || argc > 5) {
+				snprintf(err, errsz, "eval: bisection(expr, a, b[, tol[, maxIter]])");
+				goto fail;
+			}
+			if (args[0].kind != VEC_VALUE_EXPR ||
+			    args[1].kind != VEC_VALUE_NUMBER ||
+			    args[2].kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: bisection(expr, a, b[, tol[, maxIter]])");
+				goto fail;
+			}
+			double a = vec_number_float64(args[1].num);
+			double b = vec_number_float64(args[2].num);
+			if (a >= b) {
+				snprintf(err, errsz, "eval: bisection expects a < b");
+				goto fail;
+			}
+			double tol = 1e-9;
+			if (argc >= 4) {
+				if (args[3].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: bisection(expr, a, b[, tol[, maxIter]])");
+					goto fail;
+				}
+				double v = vec_number_float64(args[3].num);
+				if (v > 0 && !isinf(v) && !isnan(v))
+					tol = v;
+			}
+			int max_iter = 64;
+			if (argc == 5) {
+				if (args[4].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: bisection(expr, a, b[, tol[, maxIter]])");
+					goto fail;
+				}
+				double it = vec_number_float64(args[4].num);
+				if (isnan(it) || isinf(it) || it != trunc_d(it)) {
+					snprintf(err, errsz, "eval: expected integer");
+					goto fail;
+				}
+				if (it >= 1 && it <= 2048)
+					max_iter = (int)it;
+			}
+
+			double root;
+			if (vec_numeric_bisection_root(e, args[0].expr, a, b, tol, max_iter, &root, err, errsz) != 0)
+				goto fail;
+			*out = vec_value_number(vec_float(root));
+			goto done;
+		}
+
+		if (!strcmp(name, "secant")) {
+			if (argc < 3 || argc > 5) {
+				snprintf(err, errsz, "eval: secant(expr, x0, x1[, tol[, maxIter]])");
+				goto fail;
+			}
+			if (args[0].kind != VEC_VALUE_EXPR ||
+			    args[1].kind != VEC_VALUE_NUMBER ||
+			    args[2].kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: secant(expr, x0, x1[, tol[, maxIter]])");
+				goto fail;
+			}
+			double x0 = vec_number_float64(args[1].num);
+			double x1 = vec_number_float64(args[2].num);
+			double tol = 1e-9;
+			if (argc >= 4) {
+				if (args[3].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: secant(expr, x0, x1[, tol[, maxIter]])");
+					goto fail;
+				}
+				double v = vec_number_float64(args[3].num);
+				if (v > 0 && !isinf(v) && !isnan(v))
+					tol = v;
+			}
+			int max_iter = 64;
+			if (argc == 5) {
+				if (args[4].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: secant(expr, x0, x1[, tol[, maxIter]])");
+					goto fail;
+				}
+				double it = vec_number_float64(args[4].num);
+				if (isnan(it) || isinf(it) || it != trunc_d(it)) {
+					snprintf(err, errsz, "eval: expected integer");
+					goto fail;
+				}
+				if (it >= 1 && it <= 2048)
+					max_iter = (int)it;
+			}
+
+			double root;
+			if (vec_numeric_secant_root(e, args[0].expr, x0, x1, tol, max_iter, &root, err, errsz) != 0)
+				goto fail;
+			*out = vec_value_number(vec_float(root));
+			goto done;
+		}
+
+		if (!strcmp(name, "diff_num")) {
+			if (argc < 2 || argc > 3) {
+				snprintf(err, errsz, "eval: diff_num(expr, x[, h])");
+				goto fail;
+			}
+			if (args[0].kind != VEC_VALUE_EXPR || args[1].kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: diff_num(expr, x[, h])");
+				goto fail;
+			}
+			double x = vec_number_float64(args[1].num);
+			double h = 1e-6 * (1 + fabs(x));
+			if (argc == 3) {
+				if (args[2].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: diff_num(expr, x[, h])");
+					goto fail;
+				}
+				double v = vec_number_float64(args[2].num);
+				if (v > 0 && !isinf(v) && !isnan(v))
+					h = v;
+			}
+			double d;
+			if (vec_numeric_diff_central(e, args[0].expr, x, h, &d, err, errsz) != 0)
+				goto fail;
+			*out = vec_value_number(vec_float(d));
+			goto done;
+		}
+
+		if (!strcmp(name, "integrate_num")) {
+			if (argc < 3 || argc > 5) {
+				snprintf(err, errsz, "eval: integrate_num(expr, a, b[, method[, n]])");
+				goto fail;
+			}
+			if (args[0].kind != VEC_VALUE_EXPR ||
+			    args[1].kind != VEC_VALUE_NUMBER ||
+			    args[2].kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: integrate_num(expr, a, b[, method[, n]])");
+				goto fail;
+			}
+			double a = vec_number_float64(args[1].num);
+			double b = vec_number_float64(args[2].num);
+			if (a == b) {
+				*out = vec_value_number(vec_float(0));
+				goto done;
+			}
+
+			int method = 0;
+			int n = 1024;
+			if (argc >= 4) {
+				if (args[3].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: integrate_num(expr, a, b[, method[, n]])");
+					goto fail;
+				}
+				double v = vec_number_float64(args[3].num);
+				if (isnan(v) || isinf(v) || v != trunc_d(v)) {
+					snprintf(err, errsz, "eval: expected integer");
+					goto fail;
+				}
+				if (v > 1) {
+					if (v < 2 || v > 1000000) {
+						snprintf(err, errsz, "eval: integrate_num n must be 2..1000000");
+						goto fail;
+					}
+					n = (int)v;
+				} else {
+					method = (int)v;
+				}
+			}
+			if (argc == 5) {
+				if (args[4].kind != VEC_VALUE_NUMBER) {
+					snprintf(err, errsz, "eval: integrate_num(expr, a, b[, method[, n]])");
+					goto fail;
+				}
+				double v = vec_number_float64(args[4].num);
+				if (isnan(v) || isinf(v) || v != trunc_d(v)) {
+					snprintf(err, errsz, "eval: expected integer");
+					goto fail;
+				}
+				if (v < 2 || v > 1000000) {
+					snprintf(err, errsz, "eval: integrate_num n must be 2..1000000");
+					goto fail;
+				}
+				n = (int)v;
+			}
+			if (method < 0 || method > 1) {
+				snprintf(err, errsz, "eval: integrate_num method must be 0..1");
+				goto fail;
+			}
+			if (n < 2 || n > 1000000) {
+				snprintf(err, errsz, "eval: integrate_num n must be 2..1000000");
+				goto fail;
+			}
+
+			double result;
+			switch (method) {
+			case 0:
+				if (vec_numeric_integrate_trapezoid(e, args[0].expr, a, b, n, &result, err, errsz) != 0)
+					goto fail;
+				break;
+			case 1:
+				if (vec_numeric_integrate_simpson(e, args[0].expr, a, b, n, &result, err, errsz) != 0)
+					goto fail;
+				break;
+			default:
+				snprintf(err, errsz, "eval: integrate_num method must be 0..1");
+				goto fail;
+			}
+			*out = vec_value_number(vec_float(result));
+			goto done;
+		}
+
+		if (!strcmp(name, "interp")) {
+			if (argc != 2) {
+				snprintf(err, errsz, "eval: interp(data, x)");
+				goto fail;
+			}
+			if (args[1].kind != VEC_VALUE_NUMBER) {
+				snprintf(err, errsz, "eval: interp(data, x)");
+				goto fail;
+			}
+			double x = vec_number_float64(args[1].num);
+			double y;
+			char ibuf[96];
+			ibuf[0] = 0;
+			if (vec_numeric_interp1(&args[0], x, &y, ibuf, sizeof(ibuf)) != 0) {
+				snprintf(err, errsz, "eval: interp: %s", ibuf[0] ? ibuf : "invalid data");
+				goto fail;
+			}
+			*out = vec_value_number(vec_float(y));
+			goto done;
+		}
+
+		/* Complex helpers. */
+		if (!strcmp(name, "rect") && argc == 2 && args[0].kind == VEC_VALUE_NUMBER && args[1].kind == VEC_VALUE_NUMBER) {
+			double r = vec_number_float64(args[0].num);
+			double phi = vec_number_float64(args[1].num);
 		*out = vec_value_complex(r * cos(phi), r * sin(phi));
 		goto done;
 	}
