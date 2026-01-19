@@ -4,6 +4,7 @@
 #include <exec.h>
 #include "config.h"
 #include "globals.h"
+#include <devrd.h>
 
 #undef DEBUG
 
@@ -305,7 +306,11 @@ void clonecurrentprocess(ptptr p)
 uint_fast8_t plt_canswapon(uint16_t devno)
 {
     /* Only allow swapping to hd devices. */
-    return (devno >> 8) == 0;
+    if ((devno >> 8) == 0)
+        return 1;               /* /dev/hd* */
+    if ((devno >> 8) == 8 && (devno & 0xFF) == RD_MINOR_RAM)
+        return 1;               /* /dev/rd1 (PSRAM-backed ramdisk) */
+    return 0;
 }
 
 int swapout(ptptr p)
@@ -390,4 +395,3 @@ arg_t brk_extend(uaddr_t addr)
 }
 
 // vim: ts=4 sw=4 et
-
