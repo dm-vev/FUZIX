@@ -50,6 +50,8 @@
 #define CONFIG_INLINE_IRQ
 /* Trim disk blocks when no longer used */
 #define CONFIG_TRIM
+/* Large filesystem support (FS v2, 32-bit block numbers) */
+#define CONFIG_LARGEFS
 /* Enable single tasking */
 #define CONFIG_SWAP_ONLY
 #define CONFIG_SPLIT_UDATA
