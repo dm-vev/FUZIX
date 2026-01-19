@@ -4,6 +4,7 @@
 #include "vec_fb.h"
 #include "vec_keys.h"
 #include "vec_parser.h"
+#include "vec_plot.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -53,6 +54,14 @@ struct ui_state {
 
 	int stack_top;
 	int stack_sel;
+
+	char graph_src[128];
+	vec_node *graph;
+
+	double x_min;
+	double x_max;
+	double y_min;
+	double y_max;
 
 	vec_env env;
 };
@@ -169,15 +178,61 @@ static void ui_delete(struct ui_state *u)
 	u->input_len--;
 }
 
+static void ui_switch_tab(struct ui_state *u, enum vec_tab tab);
+
 static void ui_handle_command(struct ui_state *u, const char *cmdline)
 {
 	if (!u || !cmdline)
 		return;
 
+	if (!strncmp(cmdline, "plot", 4) && (cmdline[4] == 0 || isspace((unsigned char)cmdline[4]))) {
+		const char *expr = cmdline + 4;
+		while (*expr == ' ')
+			expr++;
+		if (*expr) {
+			char err[128];
+			memset(err, 0, sizeof(err));
+			vec_actions acts;
+			if (vec_parse_input(expr, &acts, err, sizeof(err)) != 0) {
+				ui_set_message(u, err[0] ? err : "plot: parse error");
+				return;
+			}
+			if (acts.count != 1 || acts.items[0].kind != VEC_ACT_EVAL || !acts.items[0].expr) {
+				vec_actions_destroy(&acts);
+				ui_set_message(u, "plot: expected single expression");
+				return;
+			}
+			if (u->graph)
+				vec_node_destroy(u->graph);
+			u->graph = acts.items[0].expr;
+			acts.items[0].expr = NULL;
+			vec_actions_destroy(&acts);
+
+			snprintf(u->graph_src, sizeof(u->graph_src), "%s", expr);
+			ui_set_message(u, "plot updated");
+		}
+		ui_switch_tab(u, TAB_PLOT);
+		return;
+	}
 	if (!strcmp(cmdline, "help")) {
 		u->show_help = !u->show_help;
 		u->help_top = 0;
 		ui_set_message(u, u->show_help ? "help: on" : "help: off");
+		return;
+	}
+	if (!strcmp(cmdline, "term")) {
+		ui_switch_tab(u, TAB_TERMINAL);
+		return;
+	}
+	if (!strcmp(cmdline, "stack")) {
+		ui_switch_tab(u, TAB_STACK);
+		return;
+	}
+	if (!strcmp(cmdline, "clear")) {
+		for (int i = 0; i < u->line_count; i++)
+			free(u->lines[i]);
+		u->line_count = 0;
+		ui_set_message(u, "cleared");
 		return;
 	}
 	if (!strcmp(cmdline, "exact")) {
@@ -421,12 +476,26 @@ static void ui_render_plot(struct ui_state *u)
 	struct vec_color panel_bg = {0x08, 0x08, 0x08};
 	char line[256];
 
-	snprintf(line, sizeof(line), "* Plot (WIP)  press F1 to return");
+	if (u->graph) {
+		snprintf(line, sizeof(line), "* plot: %s", u->graph_src[0] ? u->graph_src : "<expr>");
+	} else {
+		snprintf(line, sizeof(line), "* plot: (none)  use :plot EXPR");
+	}
 	if (u->cols > 0 && u->cols < (int)sizeof(line))
 		line[u->cols] = 0;
 	(void)vec_draw_text_row(&u->fb, 1, line, fg, panel_bg, -1, 0);
-	for (int r = 2; r < u->rows - 1; r++)
-		(void)vec_draw_text_row(&u->fb, r, "", fg, panel_bg, -1, 0);
+
+	/* Pixel plot area: rows 2..rows-2 (inclusive). */
+	int plot_y = 2 * VEC_FONT_H;
+	int plot_h = (u->rows - 3) * VEC_FONT_H;
+	if (plot_h > 0) {
+		char perr[96];
+		perr[0] = 0;
+		(void)vec_plot_render(&u->fb, 0, plot_y, u->fb.disp.width, plot_h,
+				      &u->env, u->graph,
+				      u->x_min, u->x_max, u->y_min, u->y_max,
+				      perr, sizeof(perr));
+	}
 }
 
 static void ui_render_stack(struct ui_state *u)
@@ -602,12 +671,20 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 		if (u->tab == TAB_TERMINAL) {
 			if (u->cursor)
 				u->cursor--;
+		} else if (u->tab == TAB_PLOT) {
+			double dx = (u->x_max - u->x_min) * 0.1;
+			u->x_min -= dx;
+			u->x_max -= dx;
 		}
 		break;
 	case VEC_KEY_RIGHT:
 		if (u->tab == TAB_TERMINAL) {
 			if (u->cursor < u->input_len)
 				u->cursor++;
+		} else if (u->tab == TAB_PLOT) {
+			double dx = (u->x_max - u->x_min) * 0.1;
+			u->x_min += dx;
+			u->x_max += dx;
 		}
 		break;
 	case VEC_KEY_HOME:
@@ -623,12 +700,22 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 			ui_hist_up(u);
 		else if (u->tab == TAB_STACK && u->stack_sel > 0)
 			u->stack_sel--;
+		else if (u->tab == TAB_PLOT) {
+			double dy = (u->y_max - u->y_min) * 0.1;
+			u->y_min += dy;
+			u->y_max += dy;
+		}
 		break;
 	case VEC_KEY_DOWN:
 		if (u->tab == TAB_TERMINAL)
 			ui_hist_down(u);
 		else if (u->tab == TAB_STACK)
 			u->stack_sel++;
+		else if (u->tab == TAB_PLOT) {
+			double dy = (u->y_max - u->y_min) * 0.1;
+			u->y_min -= dy;
+			u->y_max -= dy;
+		}
 		break;
 	case VEC_KEY_RUNE:
 		if (u->tab != TAB_TERMINAL && k.r == 'q') {
@@ -637,6 +724,27 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 		}
 		if (u->tab == TAB_TERMINAL && k.r >= 0x20 && k.r != 0x7f)
 			ui_insert_char(u, (int)k.r);
+		if (u->tab == TAB_PLOT) {
+			if (k.r == '+' || k.r == '=') {
+				double cx = (u->x_min + u->x_max) * 0.5;
+				double cy = (u->y_min + u->y_max) * 0.5;
+				double rx = (u->x_max - u->x_min) * 0.5 * 0.8;
+				double ry = (u->y_max - u->y_min) * 0.5 * 0.8;
+				u->x_min = cx - rx;
+				u->x_max = cx + rx;
+				u->y_min = cy - ry;
+				u->y_max = cy + ry;
+			} else if (k.r == '-') {
+				double cx = (u->x_min + u->x_max) * 0.5;
+				double cy = (u->y_min + u->y_max) * 0.5;
+				double rx = (u->x_max - u->x_min) * 0.5 * 1.25;
+				double ry = (u->y_max - u->y_min) * 0.5 * 1.25;
+				u->x_min = cx - rx;
+				u->x_max = cx + rx;
+				u->y_min = cy - ry;
+				u->y_max = cy + ry;
+			}
+		}
 		break;
 	default:
 		break;
@@ -676,6 +784,12 @@ int main(int argc, char **argv)
 	u.kbdfd = -1;
 	u.tab = TAB_TERMINAL;
 	u.hist_pos = 0;
+	u.graph = NULL;
+	u.graph_src[0] = 0;
+	u.x_min = -10;
+	u.x_max = 10;
+	u.y_min = -10;
+	u.y_max = 10;
 
 	char fb_err[128];
 	if (vec_fb_open(&u.fb, fb_mode, fb_err, sizeof(fb_err)) != 0) {
@@ -738,6 +852,7 @@ int main(int argc, char **argv)
 	restore_kbd(&u);
 	close(u.kbdfd);
 	vec_env_destroy(&u.env);
+	vec_node_destroy(u.graph);
 	for (int i = 0; i < u.line_count; i++)
 		free(u.lines[i]);
 	for (int i = 0; i < u.hist_count; i++)
