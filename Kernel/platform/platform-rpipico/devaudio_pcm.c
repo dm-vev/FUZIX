@@ -13,6 +13,10 @@
 #error "devaudio_pcm.c requires CONFIG_AUDIO_PCM"
 #endif
 
+#if AUDIO_OUTPUT_MODE != AUDIO_OUTPUT_MODE_PWM
+#error "Only AUDIO_OUTPUT_MODE_PWM is supported on rpipico"
+#endif
+
 #if AUDIO_BUFFER_SIZE < 2
 #error "AUDIO_BUFFER_SIZE must be >= 2"
 #endif
