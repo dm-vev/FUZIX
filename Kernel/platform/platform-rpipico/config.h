@@ -90,6 +90,17 @@
 #define DEV_RD_ROM_SIZE  0
 #define DEV_RD_RAM_SIZE  ((uint32_t)DEV_RD_RAM_PAGES << 12)
 
+/* PCM audio stack (/dev/audio, /dev/audio0) */
+#define CONFIG_AUDIO_PCM
+#define AUDIO_SAMPLE_RATE 8000
+#define AUDIO_BUFFER_SIZE 2048
+#define MAX_AUDIO_STREAMS 4
+#define AUDIO_STREAM_BUFFER_SIZE 256
+#define AUDIO_OUTPUT_MODE_PWM 1
+#define AUDIO_OUTPUT_MODE_DAC 2
+#define AUDIO_OUTPUT_MODE AUDIO_OUTPUT_MODE_PWM
+#define AUDIO_PWM_PIN 22
+
 /* Program layout */
 
 #define UDATA_BLKS  3
