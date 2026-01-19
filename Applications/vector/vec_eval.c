@@ -105,7 +105,8 @@ static int eval_compare(vec_env *e, vec_cmp_op op, vec_value a, vec_value b, vec
 	return 0;
 }
 
-int vec_eval_node(vec_env *e, const vec_node *n, vec_value *out, char *err, size_t errsz)
+static int vec_eval_node_impl(vec_env *e, const vec_node *n, const char *ov_name, vec_value ov_value,
+			      vec_value *out, char *err, size_t errsz)
 {
 	if (!e || !n || !out) {
 		snprintf(err, errsz, "eval: bad args");
@@ -117,13 +118,17 @@ int vec_eval_node(vec_env *e, const vec_node *n, vec_value *out, char *err, size
 		*out = vec_value_number(n->u.number);
 		return 0;
 	case VEC_NODE_IDENT:
+		if (ov_name && n->u.ident.name && !strcmp(n->u.ident.name, ov_name)) {
+			*out = ov_value;
+			return 0;
+		}
 		if (vec_env_get_var(e, n->u.ident.name, out) == 0)
 			return 0;
 		snprintf(err, errsz, "eval: unknown variable '%s'", n->u.ident.name ? n->u.ident.name : "?");
 		return -1;
 	case VEC_NODE_UNARY: {
 		vec_value x;
-		if (vec_eval_node(e, n->u.unary.x, &x, err, errsz) != 0)
+		if (vec_eval_node_impl(e, n->u.unary.x, ov_name, ov_value, &x, err, errsz) != 0)
 			return -1;
 		if (x.kind != VEC_VALUE_NUMBER) {
 			snprintf(err, errsz, "eval: unary on non-number");
@@ -143,9 +148,9 @@ int vec_eval_node(vec_env *e, const vec_node *n, vec_value *out, char *err, size
 	}
 	case VEC_NODE_BINARY: {
 		vec_value a, b;
-		if (vec_eval_node(e, n->u.binary.left, &a, err, errsz) != 0)
+		if (vec_eval_node_impl(e, n->u.binary.left, ov_name, ov_value, &a, err, errsz) != 0)
 			return -1;
-		if (vec_eval_node(e, n->u.binary.right, &b, err, errsz) != 0)
+		if (vec_eval_node_impl(e, n->u.binary.right, ov_name, ov_value, &b, err, errsz) != 0)
 			return -1;
 		if (a.kind != VEC_VALUE_NUMBER || b.kind != VEC_VALUE_NUMBER) {
 			snprintf(err, errsz, "eval: binary on non-number");
@@ -180,9 +185,9 @@ int vec_eval_node(vec_env *e, const vec_node *n, vec_value *out, char *err, size
 		return eval_call(e, n, out, err, errsz);
 	case VEC_NODE_COMPARE: {
 		vec_value a, b;
-		if (vec_eval_node(e, n->u.compare.left, &a, err, errsz) != 0)
+		if (vec_eval_node_impl(e, n->u.compare.left, ov_name, ov_value, &a, err, errsz) != 0)
 			return -1;
-		if (vec_eval_node(e, n->u.compare.right, &b, err, errsz) != 0)
+		if (vec_eval_node_impl(e, n->u.compare.right, ov_name, ov_value, &b, err, errsz) != 0)
 			return -1;
 		return eval_compare(e, n->u.compare.op, a, b, out, err, errsz);
 	}
@@ -192,3 +197,15 @@ int vec_eval_node(vec_env *e, const vec_node *n, vec_value *out, char *err, size
 	}
 }
 
+int vec_eval_node(vec_env *e, const vec_node *n, vec_value *out, char *err, size_t errsz)
+{
+	vec_value dummy;
+	memset(&dummy, 0, sizeof(dummy));
+	return vec_eval_node_impl(e, n, NULL, dummy, out, err, errsz);
+}
+
+int vec_eval_node_override(vec_env *e, const vec_node *n, const char *ov_name, vec_value ov_value,
+			   vec_value *out, char *err, size_t errsz)
+{
+	return vec_eval_node_impl(e, n, ov_name, ov_value, out, err, errsz);
+}
