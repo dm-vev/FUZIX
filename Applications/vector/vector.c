@@ -15,6 +15,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
@@ -24,6 +25,12 @@ enum {
 	MAX_HISTORY = 200,
 	MAX_PLOTS = 8,
 	MAX_PLOT_POINTS = 1024
+};
+
+enum {
+	UI_DEFAULT_PLOT_DIM = 2,
+	/* Spark defaults. */
+	UI_DEFAULT_3D_PLOT_COLOR_MODE = 1,
 };
 
 enum vec_tab {
@@ -80,6 +87,13 @@ struct ui_state {
 
 	struct ui_plot plots[MAX_PLOTS];
 	int plot_count;
+
+	int plot_dim;
+	double plot_yaw;
+	double plot_pitch;
+	double plot_zoom;
+	uint8_t plot_color_mode;
+	int show_axes_3d;
 
 	double x_min;
 	double x_max;
@@ -427,7 +441,10 @@ static void ui_status_text(struct ui_state *u, char *out, size_t outsz, int *cur
 		ui_fmt_axis(u->x_max, xmax, sizeof(xmax));
 		ui_fmt_axis(u->y_min, ymin, sizeof(ymin));
 		ui_fmt_axis(u->y_max, ymax, sizeof(ymax));
-		snprintf(out, outsz, "x:[%s..%s] y:[%s..%s]", xmin, xmax, ymin, ymax);
+		if (u->plot_dim == 3)
+			snprintf(out, outsz, "3D x:[%s..%s] y:[%s..%s] zoom:%0.2f", xmin, xmax, ymin, ymax, u->plot_zoom);
+		else
+			snprintf(out, outsz, "x:[%s..%s] y:[%s..%s]", xmin, xmax, ymin, ymax);
 		break;
 	}
 	case TAB_STACK:
@@ -778,6 +795,37 @@ static void ui_plot_zoom(struct ui_state *u, double factor)
 	ui_normalize_view(u);
 }
 
+static double clamp_double(double v, double lo, double hi)
+{
+	if (v < lo)
+		return lo;
+	if (v > hi)
+		return hi;
+	return v;
+}
+
+static void ui_reset_3d_view(struct ui_state *u)
+{
+	if (!u)
+		return;
+	u->plot_yaw = 0.8;
+	u->plot_pitch = 0.85;
+	u->plot_zoom = 1.1;
+	if (u->plot_color_mode > 2)
+		u->plot_color_mode = UI_DEFAULT_3D_PLOT_COLOR_MODE;
+}
+
+static void ui_plot_zoom_3d(struct ui_state *u, double factor)
+{
+	if (!u)
+		return;
+	if (factor <= 0 || isnan(factor) || isinf(factor))
+		return;
+	double z = u->plot_zoom / factor;
+	z = clamp_double(z, 0.2, 20.0);
+	u->plot_zoom = z;
+}
+
 static void ui_set_domain_from_array(struct ui_state *u, const vec_value *v)
 {
 	if (!u || !v || v->kind != VEC_VALUE_ARRAY || !v->arr || v->len < 2)
@@ -967,7 +1015,7 @@ static void ui_set_graph_take(struct ui_state *u, const char *src, vec_node *exp
 	u->graph = expr;
 	snprintf(u->graph_src, sizeof(u->graph_src), "%s", src ? src : "");
 
-	if (u->graph && vec_node_has_ident(u->graph, "x"))
+	if (u->plot_dim != 3 && u->graph && vec_node_has_ident(u->graph, "x"))
 		ui_autoscale_plots(u);
 }
 
@@ -1053,6 +1101,121 @@ static void ui_force_plot(struct ui_state *u)
 			ui_try_plot_series(u, "y", &yv);
 		vec_value_destroy(&yv);
 	}
+}
+
+static void ui_set_plot_tab_message(struct ui_state *u)
+{
+	if (!u)
+		return;
+	if (u->plot_dim == 3) {
+		ui_set_message(u, "3D: arrows rotate | +/- zoom | PgUp/PgDn zoom | Tab axes | z zoom step | a autoscale | c term | $plotdim 2");
+	} else {
+		ui_set_message(u, "arrows pan | +/- zoom | PgUp/PgDn zoom | z zoom step | a autoscale | c term");
+	}
+}
+
+static void ui_handle_service_command(struct ui_state *u, const char *cmdline)
+{
+	if (!u || !cmdline)
+		return;
+
+	char buf[128];
+	snprintf(buf, sizeof(buf), "%s", cmdline);
+
+	char *fields[3];
+	int n = 0;
+	char *p = buf;
+	while (*p && n < (int)(sizeof(fields) / sizeof(fields[0]))) {
+		while (*p && isspace((unsigned char)*p))
+			p++;
+		if (!*p)
+			break;
+		fields[n++] = p;
+		while (*p && !isspace((unsigned char)*p))
+			p++;
+		if (*p)
+			*p++ = 0;
+	}
+	if (n == 0)
+		return;
+
+	const char *cmd = fields[0];
+	if (!strcmp(cmd, "plotdim")) {
+		if (n != 2) {
+			ui_set_message(u, "usage: $plotdim 2|3");
+			return;
+		}
+		int dim = atoi(fields[1]);
+		if (dim != 2 && dim != 3) {
+			ui_set_message(u, "plotdim: expected 2 or 3");
+			return;
+		}
+		u->plot_dim = dim;
+		if (dim == 3)
+			ui_reset_3d_view(u);
+		if (u->tab == TAB_PLOT)
+			ui_set_plot_tab_message(u);
+		else {
+			char msg[32];
+			snprintf(msg, sizeof(msg), "plotdim: %d", dim);
+			ui_set_message(u, msg);
+		}
+		return;
+	}
+
+	if (!strcmp(cmd, "plotcolor")) {
+		if (n == 1) {
+			u->plot_color_mode = (uint8_t)((u->plot_color_mode + 1) % 3);
+		} else if (n == 2) {
+			if (!strcmp(fields[1], "0") || !strcmp(fields[1], "mono")) {
+				u->plot_color_mode = 0;
+			} else if (!strcmp(fields[1], "1") || !strcmp(fields[1], "height")) {
+				u->plot_color_mode = 1;
+			} else if (!strcmp(fields[1], "2") || !strcmp(fields[1], "pos") || !strcmp(fields[1], "position")) {
+				u->plot_color_mode = 2;
+			} else {
+				ui_set_message(u, "plotcolor: expected 0|1|2 or mono|height|pos");
+				return;
+			}
+		} else {
+			ui_set_message(u, "usage: $plotcolor [0|1|2]");
+			return;
+		}
+		const char *name = "mono";
+		if (u->plot_color_mode == 1)
+			name = "height";
+		else if (u->plot_color_mode == 2)
+			name = "pos";
+		{
+			char msg[48];
+			snprintf(msg, sizeof(msg), "plotcolor: %s", name);
+			ui_set_message(u, msg);
+		}
+		return;
+	}
+
+	if (!strcmp(cmd, "resetview")) {
+		u->x_min = -10;
+		u->x_max = 10;
+		u->y_min = -10;
+		u->y_max = 10;
+		ui_normalize_view(u);
+		ui_reset_3d_view(u);
+		ui_set_message(u, "view reset");
+		return;
+	}
+
+	if (!strcmp(cmd, "autoscale")) {
+		if (u->plot_count == 0 && !u->graph) {
+			ui_set_message(u, "autoscale: no plot");
+			return;
+		}
+		ui_autoscale_plots(u);
+		ui_set_message(u, "autoscale");
+		return;
+	}
+
+	ui_set_message(u, "unknown service command");
 }
 
 static void ui_handle_command(struct ui_state *u, const char *cmdline)
@@ -1268,6 +1431,10 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 
 	if (line[0] == ':') {
 		ui_handle_command(u, line + 1);
+		return;
+	}
+	if (line[0] == '$') {
+		ui_handle_service_command(u, line + 1);
 		return;
 	}
 
@@ -1647,6 +1814,9 @@ static void ui_render_help(struct ui_state *u)
 		"  :plotclear   clear plots",
 		"  arrows pan   +/- zoom   PgUp/PgDn zoom",
 		"  z zoom step  a autoscale  c term",
+		"  $plotdim 2|3",
+		"  $plotcolor [0|1|2]",
+		"  3D: arrows rotate  Tab axes",
 		"",
 		"stack:",
 		"  Up/Down select",
@@ -1712,8 +1882,9 @@ static void ui_switch_tab(struct ui_state *u, enum vec_tab tab)
 			const char *src = u->graph_src[0] ? u->graph_src : "<expr>";
 			(void)ui_add_plot_func(u, src, u->graph);
 		}
-		ui_autoscale_plots(u);
-		ui_set_message(u, "arrows pan | +/- zoom | PgUp/PgDn zoom | z zoom step | a autoscale | c term");
+		if (u->plot_dim != 3)
+			ui_autoscale_plots(u);
+		ui_set_plot_tab_message(u);
 		break;
 	case TAB_STACK:
 		u->stack_sel = 0;
@@ -1850,6 +2021,10 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 		}
 		break;
 	case VEC_KEY_TAB:
+		if (u->tab == TAB_PLOT && u->plot_dim == 3) {
+			u->show_axes_3d = !u->show_axes_3d;
+			ui_set_message(u, u->show_axes_3d ? "3D axes: on" : "3D axes: off");
+		}
 		break;
 	case VEC_KEY_CTRL:
 		if (k.ctrl == 0x07) {
@@ -1870,7 +2045,11 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 			if (u->cursor)
 				u->cursor--;
 		} else if (u->tab == TAB_PLOT) {
-			ui_plot_pan(u, -0.1, 0);
+			if (u->plot_dim == 3) {
+				u->plot_yaw -= 0.1;
+			} else {
+				ui_plot_pan(u, -0.1, 0);
+			}
 		}
 		break;
 	case VEC_KEY_RIGHT:
@@ -1878,7 +2057,11 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 			if (u->cursor < u->input_len)
 				u->cursor++;
 		} else if (u->tab == TAB_PLOT) {
-			ui_plot_pan(u, 0.1, 0);
+			if (u->plot_dim == 3) {
+				u->plot_yaw += 0.1;
+			} else {
+				ui_plot_pan(u, 0.1, 0);
+			}
 		}
 		break;
 	case VEC_KEY_HOME:
@@ -1902,7 +2085,11 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 		else if (u->tab == TAB_STACK && u->stack_sel > 0)
 			u->stack_sel--;
 		else if (u->tab == TAB_PLOT) {
-			ui_plot_pan(u, 0, 0.1);
+			if (u->plot_dim == 3) {
+				u->plot_pitch = clamp_double(u->plot_pitch - 0.08, -1.2, 1.2);
+			} else {
+				ui_plot_pan(u, 0, 0.1);
+			}
 		}
 		break;
 	case VEC_KEY_DOWN:
@@ -1914,16 +2101,28 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 				u->stack_sel++;
 		}
 		else if (u->tab == TAB_PLOT) {
-			ui_plot_pan(u, 0, -0.1);
+			if (u->plot_dim == 3) {
+				u->plot_pitch = clamp_double(u->plot_pitch + 0.08, -1.2, 1.2);
+			} else {
+				ui_plot_pan(u, 0, -0.1);
+			}
 		}
 		break;
 	case VEC_KEY_PGUP:
-		if (u->tab == TAB_PLOT)
-			ui_plot_zoom(u, u->zoom_in_factor);
+		if (u->tab == TAB_PLOT) {
+			if (u->plot_dim == 3)
+				ui_plot_zoom_3d(u, u->zoom_in_factor);
+			else
+				ui_plot_zoom(u, u->zoom_in_factor);
+		}
 		break;
 	case VEC_KEY_PGDN:
-		if (u->tab == TAB_PLOT)
-			ui_plot_zoom(u, u->zoom_out_factor);
+		if (u->tab == TAB_PLOT) {
+			if (u->plot_dim == 3)
+				ui_plot_zoom_3d(u, u->zoom_out_factor);
+			else
+				ui_plot_zoom(u, u->zoom_out_factor);
+		}
 		break;
 	case VEC_KEY_RUNE:
 		if (u->tab != TAB_TERMINAL && k.r == 'q') {
@@ -1946,9 +2145,15 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 			} else if (k.r == 'z' || k.r == 'Z') {
 				ui_cycle_plot_zoom(u);
 			} else if (k.r == '+' || k.r == '=') {
-				ui_plot_zoom(u, u->zoom_in_factor);
+				if (u->plot_dim == 3)
+					ui_plot_zoom_3d(u, u->zoom_in_factor);
+				else
+					ui_plot_zoom(u, u->zoom_in_factor);
 			} else if (k.r == '-') {
-				ui_plot_zoom(u, u->zoom_out_factor);
+				if (u->plot_dim == 3)
+					ui_plot_zoom_3d(u, u->zoom_out_factor);
+				else
+					ui_plot_zoom(u, u->zoom_out_factor);
 			}
 		}
 		break;
@@ -1998,6 +2203,10 @@ int main(int argc, char **argv)
 	u.y_max = 10;
 	u.zoom_in_factor = 0.8;
 	u.zoom_out_factor = 1.25;
+	u.plot_dim = UI_DEFAULT_PLOT_DIM;
+	u.plot_color_mode = UI_DEFAULT_3D_PLOT_COLOR_MODE;
+	u.show_axes_3d = 0;
+	ui_reset_3d_view(&u);
 
 	char fb_err[128];
 	if (vec_fb_open(&u.fb, fb_mode, fb_err, sizeof(fb_err)) != 0) {
