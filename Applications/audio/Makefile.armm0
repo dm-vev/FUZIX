@@ -1,0 +1,4 @@
+ROOT = ../..
+include $(ROOT)/Target/rules.armm0
+include Makefile.generic
+

@@ -1,0 +1,24 @@
+SRCS = \
+	audio-mixerd.c \
+	beep.c \
+	wavplay.c
+
+OBJS = $(SRCS:.c=.o)
+APPS = $(OBJS:.o=)
+
+all: $(APPS)
+
+$(APPS): $(CRT0)
+
+$(APPS): %: %.o
+	$(LINKER) $^ -o $@.debug $(LINKER_OPT)
+ifdef ELF2FUZIX
+	$(STRIP) -o $@.bin $(STRIP_OPT) $@.debug
+	$(ELF2FUZIX) -o $@ $@.bin
+else
+	$(STRIP) -o $@ $(STRIP_OPT) $@.debug
+endif
+
+clean:
+	rm -f $(OBJS) $(APPS) *.bin *.debug *~ core
+
