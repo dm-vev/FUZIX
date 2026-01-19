@@ -22,6 +22,10 @@ extern void __force_eval(float f);
 #define FORCE_EVAL(x)	__force_eval(x)
 #endif
 
+#ifndef STRICT_ASSIGN
+#define STRICT_ASSIGN(type, lval, rval) do { volatile type __x = (rval); (lval) = __x; } while (0)
+#endif
+
 union fshape {
 	float value;
 	uint32_t bits;
