@@ -21,6 +21,14 @@
 #error "AUDIO_BUFFER_SIZE must be >= 2"
 #endif
 
+#ifndef AUDIO_PWM_PIN_L
+#define AUDIO_PWM_PIN_L AUDIO_PWM_PIN
+#endif
+
+#ifndef AUDIO_PWM_PIN_R
+#define AUDIO_PWM_PIN_R 0
+#endif
+
 static uint8_t audio0_buf[AUDIO_BUFFER_SIZE];
 static volatile uint16_t audio0_head;
 static volatile uint16_t audio0_tail;
@@ -33,24 +41,69 @@ static uint8_t audio0_pwm_init_done;
 static uint8_t audio0_alarm_claimed;
 static uint8_t audio0_running;
 
-static uint8_t audio0_pwm_slice;
+static uint8_t audio0_pwm_have_r;
+static uint8_t audio0_pwm_same_slice;
+static uint8_t audio0_pwm_use_both_levels;
+static uint8_t audio0_pwm_slice_l;
+static uint8_t audio0_pwm_slice_r;
+static uint8_t audio0_pwm_chan_l;
+static uint8_t audio0_pwm_chan_r;
 
 static uint64_t audio0_period_fp;
 static uint64_t audio0_next_fp;
 
+static void audio0_pwm_set_level(uint8_t sample)
+{
+	if (audio0_pwm_use_both_levels) {
+		pwm_set_both_levels(audio0_pwm_slice_l, sample, sample);
+		return;
+	}
+
+	pwm_set_chan_level(audio0_pwm_slice_l, audio0_pwm_chan_l, sample);
+	if (audio0_pwm_have_r)
+		pwm_set_chan_level(audio0_pwm_slice_r, audio0_pwm_chan_r, sample);
+}
+
 static void audio0_pwm_init(void)
 {
 	uint16_t wrap = 255;
+	pwm_config config;
+	uint8_t slice_l;
+	uint8_t slice_r;
 
 	if (audio0_pwm_init_done)
 		return;
 
-	gpio_set_function(AUDIO_PWM_PIN, GPIO_FUNC_PWM);
-	audio0_pwm_slice = pwm_gpio_to_slice_num(AUDIO_PWM_PIN);
-	pwm_set_wrap(audio0_pwm_slice, wrap);
-	pwm_set_clkdiv_int_frac(audio0_pwm_slice, 1, 0);
-	pwm_set_gpio_level(AUDIO_PWM_PIN, 128);
-	pwm_set_enabled(audio0_pwm_slice, true);
+	audio0_pwm_have_r = (AUDIO_PWM_PIN_R != 0);
+
+	gpio_set_function(AUDIO_PWM_PIN_L, GPIO_FUNC_PWM);
+	slice_l = pwm_gpio_to_slice_num(AUDIO_PWM_PIN_L);
+	audio0_pwm_slice_l = slice_l;
+	audio0_pwm_chan_l = pwm_gpio_to_channel(AUDIO_PWM_PIN_L);
+
+	if (audio0_pwm_have_r) {
+		gpio_set_function(AUDIO_PWM_PIN_R, GPIO_FUNC_PWM);
+		slice_r = pwm_gpio_to_slice_num(AUDIO_PWM_PIN_R);
+		audio0_pwm_slice_r = slice_r;
+		audio0_pwm_chan_r = pwm_gpio_to_channel(AUDIO_PWM_PIN_R);
+	} else {
+		slice_r = slice_l;
+		audio0_pwm_slice_r = slice_l;
+		audio0_pwm_chan_r = audio0_pwm_chan_l;
+	}
+
+	audio0_pwm_same_slice = (slice_l == slice_r);
+	audio0_pwm_use_both_levels = (audio0_pwm_have_r && audio0_pwm_same_slice && audio0_pwm_chan_l != audio0_pwm_chan_r);
+
+	config = pwm_get_default_config();
+	pwm_config_set_wrap(&config, wrap);
+	pwm_config_set_clkdiv_int_frac(&config, 1, 0);
+
+	pwm_init(slice_l, &config, true);
+	if (audio0_pwm_have_r && slice_r != slice_l)
+		pwm_init(slice_r, &config, true);
+
+	audio0_pwm_set_level(128);
 
 	audio0_pwm_init_done = 1;
 }
@@ -91,7 +144,7 @@ static void audio0_tick_cb(unsigned alarm)
 			audio0_tail = 0;
 		audio0_count--;
 	}
-	pwm_set_gpio_level(AUDIO_PWM_PIN, sample);
+	audio0_pwm_set_level(sample);
 	if (was_full)
 		wakeup(&audio0_wait);
 
@@ -132,7 +185,7 @@ static void audio0_stop(void)
 		hardware_alarm_unclaim(1);
 		audio0_alarm_claimed = 0;
 	}
-	pwm_set_gpio_level(AUDIO_PWM_PIN, 128);
+	audio0_pwm_set_level(128);
 	irqrestore(irq);
 }
 
