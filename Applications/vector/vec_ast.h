@@ -64,5 +64,6 @@ vec_node *vec_node_compare_new(vec_cmp_op op, vec_node *left, vec_node *right);
 void vec_node_destroy(vec_node *n);
 
 int vec_node_has_ident(const vec_node *n, const char *name);
+vec_node *vec_node_clone(const vec_node *n);
 
 #endif

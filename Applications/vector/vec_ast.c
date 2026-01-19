@@ -171,3 +171,66 @@ int vec_node_has_ident(const vec_node *n, const char *name)
 		return 0;
 	}
 }
+
+vec_node *vec_node_clone(const vec_node *n)
+{
+	if (!n)
+		return NULL;
+	switch (n->kind) {
+	case VEC_NODE_NUMBER:
+		return vec_node_number_new(n->u.number);
+	case VEC_NODE_IDENT:
+		if (!n->u.ident.name)
+			return NULL;
+		return vec_node_ident_new(n->u.ident.name, strlen(n->u.ident.name));
+	case VEC_NODE_UNARY: {
+		vec_node *x = vec_node_clone(n->u.unary.x);
+		if (!x)
+			return NULL;
+		return vec_node_unary_new(n->u.unary.op, x);
+	}
+	case VEC_NODE_BINARY: {
+		vec_node *l = vec_node_clone(n->u.binary.left);
+		vec_node *r = vec_node_clone(n->u.binary.right);
+		if (!l || !r) {
+			vec_node_destroy(l);
+			vec_node_destroy(r);
+			return NULL;
+		}
+		return vec_node_binary_new(n->u.binary.op, l, r);
+	}
+	case VEC_NODE_CALL: {
+		if (!n->u.call.name)
+			return NULL;
+		size_t argc = n->u.call.argc;
+		vec_node **args = NULL;
+		if (argc) {
+			args = calloc(argc, sizeof(args[0]));
+			if (!args)
+				return NULL;
+			for (size_t i = 0; i < argc; i++) {
+				args[i] = vec_node_clone(n->u.call.args[i]);
+				if (!args[i]) {
+					for (size_t j = 0; j < argc; j++)
+						vec_node_destroy(args[j]);
+					free(args);
+					return NULL;
+				}
+			}
+		}
+		return vec_node_call_new(n->u.call.name, strlen(n->u.call.name), argc, args);
+	}
+	case VEC_NODE_COMPARE: {
+		vec_node *l = vec_node_clone(n->u.compare.left);
+		vec_node *r = vec_node_clone(n->u.compare.right);
+		if (!l || !r) {
+			vec_node_destroy(l);
+			vec_node_destroy(r);
+			return NULL;
+		}
+		return vec_node_compare_new(n->u.compare.op, l, r);
+	}
+	default:
+		return NULL;
+	}
+}

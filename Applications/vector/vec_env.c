@@ -64,11 +64,12 @@ int vec_env_get_var(vec_env *e, const char *name, vec_value *out)
 		return -1;
 	for (vec_var *v = e->vars; v; v = v->next) {
 		if (!strcmp(v->name, name)) {
-			*out = v->value;
+			if (vec_value_clone(out, &v->value) != 0)
+				return -1;
 			return 0;
 		}
 	}
-	return -1;
+	return 1;
 }
 
 int vec_env_set_var(vec_env *e, const char *name, vec_value v)
@@ -141,4 +142,3 @@ int vec_env_get_func(vec_env *e, const char *name, const vec_userfunc **out)
 	}
 	return -1;
 }
-

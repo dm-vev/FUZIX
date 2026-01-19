@@ -26,6 +26,7 @@ typedef struct {
 	vec_number num;
 	struct vec_node *expr;
 	double *arr;
+	size_t len;
 	double *mat;
 	int rows;
 	int cols;
@@ -34,8 +35,11 @@ typedef struct {
 
 vec_value vec_value_number(vec_number n);
 vec_value vec_value_complex(double re, double im);
+vec_value vec_value_expr(struct vec_node *expr);
+vec_value vec_value_array(double *arr, size_t len);
+vec_value vec_value_matrix(int rows, int cols, double *mat);
 
+int vec_value_clone(vec_value *dst, const vec_value *src);
 void vec_value_destroy(vec_value *v);
 
 #endif
-
