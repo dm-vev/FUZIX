@@ -1718,30 +1718,51 @@ static void ui_render_plot(struct ui_state *u)
 	if (plot_h > 0) {
 		char perr[96];
 		perr[0] = 0;
-		vec_plot plots[MAX_PLOTS];
-		size_t nplots = 0;
-		for (int i = 0; i < u->plot_count && nplots < (sizeof(plots) / sizeof(plots[0])); i++) {
-			const struct ui_plot *p = &u->plots[i];
-			vec_plot vp;
-			memset(&vp, 0, sizeof(vp));
-			if (p->kind == UI_PLOT_FUNC) {
-				vp.kind = VEC_PLOT_FUNC;
-				vp.expr = p->expr;
-			} else if (p->kind == UI_PLOT_SERIES) {
-				vp.kind = VEC_PLOT_SERIES;
-				vp.xs = p->xs;
-				vp.ys = p->ys;
-				vp.len = p->len;
-			} else {
-				continue;
+		if (u->plot_dim == 3) {
+			const vec_node *expr = u->graph;
+			if (!expr) {
+				for (int i = 0; i < u->plot_count; i++) {
+					const struct ui_plot *p = &u->plots[i];
+					if (p->kind == UI_PLOT_FUNC && p->expr) {
+						expr = p->expr;
+						break;
+					}
+				}
 			}
-			plots[nplots++] = vp;
+			int rc = vec_plot_render_3d(&u->fb, 0, plot_y, u->fb.disp.width, plot_h,
+						    &u->env, expr,
+						    u->x_min, u->x_max, u->y_min, u->y_max,
+						    u->plot_yaw, u->plot_pitch, u->plot_zoom,
+						    (int)u->plot_color_mode, u->show_axes_3d,
+						    perr, sizeof(perr));
+			if (rc != 0 && perr[0])
+				ui_set_message(u, perr);
+		} else {
+			vec_plot plots[MAX_PLOTS];
+			size_t nplots = 0;
+			for (int i = 0; i < u->plot_count && nplots < (sizeof(plots) / sizeof(plots[0])); i++) {
+				const struct ui_plot *p = &u->plots[i];
+				vec_plot vp;
+				memset(&vp, 0, sizeof(vp));
+				if (p->kind == UI_PLOT_FUNC) {
+					vp.kind = VEC_PLOT_FUNC;
+					vp.expr = p->expr;
+				} else if (p->kind == UI_PLOT_SERIES) {
+					vp.kind = VEC_PLOT_SERIES;
+					vp.xs = p->xs;
+					vp.ys = p->ys;
+					vp.len = p->len;
+				} else {
+					continue;
+				}
+				plots[nplots++] = vp;
+			}
+			const vec_node *fallback = (nplots == 0) ? u->graph : NULL;
+			(void)vec_plot_render_multi(&u->fb, 0, plot_y, u->fb.disp.width, plot_h,
+						    &u->env, plots, nplots, fallback,
+						    u->x_min, u->x_max, u->y_min, u->y_max,
+						    perr, sizeof(perr));
 		}
-		const vec_node *fallback = (nplots == 0) ? u->graph : NULL;
-		(void)vec_plot_render_multi(&u->fb, 0, plot_y, u->fb.disp.width, plot_h,
-					    &u->env, plots, nplots, fallback,
-					    u->x_min, u->x_max, u->y_min, u->y_max,
-					    perr, sizeof(perr));
 	}
 }
 
