@@ -251,7 +251,79 @@ typedef struct dinode {
     uint32_t   i_mtime;		/* Need to hide some extra bits ? */
     uint32_t   i_ctime;		/* 24 bytes */
     blkno_t  i_addr[20];
-} dinode;               /* Exactly 64 bytes long! */
+} dinode;
+
+#ifdef CONFIG_LARGEFS
+/*
+ * On-disk inode formats (512-byte filesystem blocks only)
+ *
+ * v1: legacy 16-bit block pointers (20x16-bit = 40 bytes)
+ * v2: largefs 32-bit block pointers (10x32-bit = 40 bytes)
+ *
+ * Both keep the first 24 bytes identical to preserve metadata offsets.
+ */
+typedef struct fuzix_dinode_v1 {
+    uint16_t i_mode;
+    uint16_t i_nlink;
+    uint16_t i_uid;
+    uint16_t i_gid;
+    uint32_t i_size;
+    uint32_t i_atime;
+    uint32_t i_mtime;
+    uint32_t i_ctime;
+    uint16_t i_addr[20];
+} fuzix_dinode_v1;
+
+typedef struct fuzix_dinode_v2 {
+    uint16_t i_mode;
+    uint16_t i_nlink;
+    uint16_t i_uid;
+    uint16_t i_gid;
+    uint32_t i_size;
+    uint32_t i_atime;
+    uint32_t i_mtime;
+    uint32_t i_ctime;
+    uint32_t i_addr[10];
+} fuzix_dinode_v2;
+
+/*
+ * On-disk superblock formats (block 1).
+ *
+ * v1 fields are 16-bit sized and match the legacy disk format.
+ * v2 extends size and freelist block numbers to 32-bit.
+ */
+typedef struct fuzix_filesys_v1 {
+    uint16_t s_mounted;
+    uint16_t s_isize;
+    uint16_t s_fsize;
+    uint16_t s_nfree;
+    uint16_t s_free[50];
+    int16_t  s_ninode;
+    uint16_t s_inode[50];
+    uint8_t  s_fmod;
+    uint8_t  s_timeh;
+    uint32_t s_time;
+    uint16_t s_tfree;
+    uint16_t s_tinode;
+    uint8_t  s_shift;
+} fuzix_filesys_v1;
+
+typedef struct fuzix_filesys_v2 {
+    uint16_t s_mounted;
+    uint32_t s_isize;
+    uint32_t s_fsize;
+    uint16_t s_nfree;
+    uint32_t s_free[50];
+    int16_t  s_ninode;
+    uint16_t s_inode[50];
+    uint8_t  s_fmod;
+    uint8_t  s_timeh;
+    uint32_t s_time;
+    uint32_t s_tfree;
+    uint16_t s_tinode;
+    uint8_t  s_shift;
+} fuzix_filesys_v2;
+#endif
 
 /* We use the Linux one for compatibility. There's no real Unix 'standard'
    for such things */
