@@ -4,6 +4,7 @@ include $(ROOT)/Target/rules.armm0
 APP = vector
 SRCS = \
 	vec_ast.c \
+	vec_cas.c \
 	vec_env.c \
 	vec_eval.c \
 	vec_fb.c \
