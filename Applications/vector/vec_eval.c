@@ -4,6 +4,9 @@
 #include <stdio.h>
 #include <string.h>
 
+static int vec_eval_node_impl(vec_env *e, const vec_node *n, const char *ov_name, vec_value ov_value,
+			      vec_value *out, char *err, size_t errsz);
+
 static vec_number neg_number(vec_number n)
 {
 	if (n.kind == VEC_NUM_RAT) {
@@ -72,11 +75,103 @@ static vec_number pow_number(vec_env *e, vec_number a, vec_number b)
 	return vec_float(pow(vec_number_float64(a), vec_number_float64(b)));
 }
 
-static int eval_call(vec_env *e, const vec_node *n, vec_value *out, char *err, size_t errsz)
+static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, vec_value ov_value,
+		     vec_value *out, char *err, size_t errsz)
 {
-	(void)e;
-	(void)out;
-	snprintf(err, errsz, "eval: call not implemented (%s)", n->u.call.name ? n->u.call.name : "?");
+	if (!n || n->kind != VEC_NODE_CALL || !n->u.call.name) {
+		snprintf(err, errsz, "eval: bad call");
+		return -1;
+	}
+
+	size_t argc = n->u.call.argc;
+	if (argc > 8) {
+		snprintf(err, errsz, "eval: too many args");
+		return -1;
+	}
+
+	vec_value args[8];
+	double fargs[8];
+	memset(args, 0, sizeof(args));
+	memset(fargs, 0, sizeof(fargs));
+
+	for (size_t i = 0; i < argc; i++) {
+		if (vec_eval_node_impl(e, n->u.call.args[i], ov_name, ov_value, &args[i], err, errsz) != 0)
+			return -1;
+		if (args[i].kind != VEC_VALUE_NUMBER) {
+			snprintf(err, errsz, "eval: non-number argument");
+			return -1;
+		}
+		fargs[i] = vec_number_float64(args[i].num);
+	}
+
+	const char *name = n->u.call.name;
+
+	/* Builtins (minimal subset). */
+	if (!strcmp(name, "sin") && argc == 1) {
+		*out = vec_value_number(vec_float(sin(fargs[0])));
+		return 0;
+	}
+	if (!strcmp(name, "cos") && argc == 1) {
+		*out = vec_value_number(vec_float(cos(fargs[0])));
+		return 0;
+	}
+	if (!strcmp(name, "tan") && argc == 1) {
+		double c = cos(fargs[0]);
+		if (c == 0) {
+			snprintf(err, errsz, "eval: tan: division by zero");
+			return -1;
+		}
+		*out = vec_value_number(vec_float(sin(fargs[0]) / c));
+		return 0;
+	}
+	if ((!strcmp(name, "ln") || !strcmp(name, "log")) && argc == 1) {
+		*out = vec_value_number(vec_float(log(fargs[0])));
+		return 0;
+	}
+	if (!strcmp(name, "exp") && argc == 1) {
+		*out = vec_value_number(vec_float(exp(fargs[0])));
+		return 0;
+	}
+	if (!strcmp(name, "sqrt") && argc == 1) {
+		*out = vec_value_number(vec_float(sqrt(fargs[0])));
+		return 0;
+	}
+	if (!strcmp(name, "abs") && argc == 1) {
+		*out = vec_value_number(vec_float(fabs(fargs[0])));
+		return 0;
+	}
+	if (!strcmp(name, "min") && argc >= 1) {
+		double m = fargs[0];
+		for (size_t i = 1; i < argc; i++)
+			if (fargs[i] < m)
+				m = fargs[i];
+		*out = vec_value_number(vec_float(m));
+		return 0;
+	}
+	if (!strcmp(name, "max") && argc >= 1) {
+		double m = fargs[0];
+		for (size_t i = 1; i < argc; i++)
+			if (fargs[i] > m)
+				m = fargs[i];
+		*out = vec_value_number(vec_float(m));
+		return 0;
+	}
+	if (!strcmp(name, "atan2") && argc == 2) {
+		*out = vec_value_number(vec_float(atan2(fargs[0], fargs[1])));
+		return 0;
+	}
+
+	/* User-defined single-arg functions: f(x)=... */
+	const vec_userfunc *uf;
+	if (vec_env_get_func(e, name, &uf) == 0 && uf && uf->body && uf->param) {
+		if (argc != 1) {
+			snprintf(err, errsz, "eval: %s expects 1 argument", name);
+			return -1;
+		}
+		return vec_eval_node_impl(e, uf->body, uf->param, args[0], out, err, errsz);
+	}
+
+	snprintf(err, errsz, "eval: unknown function '%s'", name);
 	return -1;
 }
 
@@ -182,7 +277,7 @@ static int vec_eval_node_impl(vec_env *e, const vec_node *n, const char *ov_name
 		}
 	}
 	case VEC_NODE_CALL:
-		return eval_call(e, n, out, err, errsz);
+		return eval_call(e, n, ov_name, ov_value, out, err, errsz);
 	case VEC_NODE_COMPARE: {
 		vec_value a, b;
 		if (vec_eval_node_impl(e, n->u.compare.left, ov_name, ov_value, &a, err, errsz) != 0)
