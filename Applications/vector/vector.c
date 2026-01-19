@@ -84,6 +84,108 @@ static void ui_set_message(struct ui_state *u, const char *s)
 	snprintf(u->message, sizeof(u->message), "%s", s);
 }
 
+static void ui_clip_cols(const struct ui_state *u, char *s, size_t ssz)
+{
+	if (!u || !s || ssz == 0)
+		return;
+	if (u->cols > 0 && (size_t)u->cols < ssz)
+		s[u->cols] = 0;
+}
+
+static void ui_fmt_axis(double v, char *buf, size_t bufsz)
+{
+	if (!buf || bufsz == 0)
+		return;
+	if (!isfinite(v)) {
+		buf[0] = 0;
+		return;
+	}
+	if (fabs(v) < 1e-12) {
+		snprintf(buf, bufsz, "0");
+		return;
+	}
+
+	double av = fabs(v);
+	if (av >= 1000 || av < 0.01)
+		snprintf(buf, bufsz, "%.2g", v);
+	else if (av >= 10)
+		snprintf(buf, bufsz, "%.0f", v);
+	else if (av >= 1)
+		snprintf(buf, bufsz, "%.2f", v);
+	else
+		snprintf(buf, bufsz, "%.3f", v);
+}
+
+static void ui_header_text(struct ui_state *u, char *out, size_t outsz)
+{
+	if (!u || !out || outsz == 0)
+		return;
+
+	out[0] = 0;
+	switch (u->tab) {
+	case TAB_PLOT:
+		if (!u->graph) {
+			snprintf(out, outsz, "VECTOR plot | F1 term F2 plot* F3 stack");
+			break;
+		}
+		{
+			const char *expr = u->graph_src[0] ? u->graph_src : "<expr>";
+			char head[128];
+			snprintf(head, sizeof(head), "VECTOR plot | F1 term F2 plot* F3 stack | ");
+			size_t hlen = strlen(head);
+			if (hlen >= outsz) {
+				snprintf(out, outsz, "%s", head);
+				break;
+			}
+			snprintf(out, outsz, "%s%s", head, expr);
+		}
+		break;
+	case TAB_STACK:
+		snprintf(out, outsz, "VECTOR stack | F1 term F2 plot F3 stack*");
+		break;
+	case TAB_TERMINAL:
+	default:
+		snprintf(out, outsz, "VECTOR | F1 term* F2 plot F3 stack");
+		break;
+	}
+	ui_clip_cols(u, out, outsz);
+}
+
+static void ui_status_text(struct ui_state *u, char *out, size_t outsz)
+{
+	if (!u || !out || outsz == 0)
+		return;
+
+	out[0] = 0;
+	switch (u->tab) {
+	case TAB_PLOT: {
+		char xmin[16], xmax[16], ymin[16], ymax[16];
+		ui_fmt_axis(u->x_min, xmin, sizeof(xmin));
+		ui_fmt_axis(u->x_max, xmax, sizeof(xmax));
+		ui_fmt_axis(u->y_min, ymin, sizeof(ymin));
+		ui_fmt_axis(u->y_max, ymax, sizeof(ymax));
+		snprintf(out, outsz, "x:[%s..%s] y:[%s..%s]", xmin, xmax, ymin, ymax);
+		break;
+	}
+	case TAB_STACK:
+		snprintf(out, outsz, "stack: Up/Down select | Enter edit | F1 term | F2 plot");
+		break;
+	case TAB_TERMINAL:
+	default:
+		snprintf(out, outsz, "%s", u->message);
+		ui_clip_cols(u, out, outsz);
+		return;
+	}
+
+	if (u->message[0]) {
+		size_t n = strlen(out);
+		if (n + 3 < outsz) {
+			snprintf(out + n, outsz - n, " | %s", u->message);
+		}
+	}
+	ui_clip_cols(u, out, outsz);
+}
+
 static void ui_append_line(struct ui_state *u, const char *s)
 {
 	if (!u || !s)
@@ -502,7 +604,7 @@ static void ui_render(struct ui_state *u)
 
 	char line[256];
 
-	snprintf(line, sizeof(line), "Vector  F1 Term  F2 Plot  F3 Stack  Esc quit");
+	ui_header_text(u, line, sizeof(line));
 	(void)vec_draw_text_row(&u->fb, 0, line, fg, header_bg, -1, 0);
 
 	if (u->show_help) {
@@ -522,10 +624,7 @@ static void ui_render(struct ui_state *u)
 		}
 	}
 
-	snprintf(line, sizeof(line), "%s",
-		 u->message[0] ? u->message : "F1/F2/F3 switch tabs  h help (plot/stack)");
-	if (u->cols > 0 && u->cols < (int)sizeof(line))
-		line[u->cols] = 0;
+	ui_status_text(u, line, sizeof(line));
 	(void)vec_draw_text_row(&u->fb, u->rows - 1, line, fg, status_bg, -1, 0);
 
 	if (u->fb.mode == FB_MODE_MEMORY)
@@ -536,6 +635,7 @@ static void ui_render_terminal(struct ui_state *u)
 {
 	struct vec_color fg = {0xEE, 0xEE, 0xEE};
 	struct vec_color panel_bg = {0x08, 0x08, 0x08};
+	struct vec_color input_bg = {0x00, 0x00, 0x00};
 
 	int panel_rows = u->rows - 2;
 	int history_rows = panel_rows - 1;
@@ -559,7 +659,7 @@ static void ui_render_terminal(struct ui_state *u)
 	}
 
 	/* Input row. */
-	const char *prompt = "V> ";
+	const char *prompt = "> ";
 	size_t prompt_len = strlen(prompt);
 	size_t visible = (u->cols > (int)prompt_len) ? (size_t)u->cols - prompt_len : 0;
 	size_t off = 0;
@@ -575,27 +675,14 @@ static void ui_render_terminal(struct ui_state *u)
 	int cursor_col = (int)prompt_len + (int)(u->cursor - off);
 	if (cursor_col < 0 || cursor_col >= u->cols)
 		cursor_col = -1;
-	(void)vec_draw_text_row(&u->fb, u->rows - 2, in, fg, panel_bg, cursor_col, 1);
+	(void)vec_draw_text_row(&u->fb, u->rows - 2, in, fg, input_bg, cursor_col, 1);
 }
 
 static void ui_render_plot(struct ui_state *u)
 {
-	struct vec_color fg = {0xEE, 0xEE, 0xEE};
-	struct vec_color panel_bg = {0x08, 0x08, 0x08};
-	char line[256];
-
-	if (u->graph) {
-		snprintf(line, sizeof(line), "* plot: %s", u->graph_src[0] ? u->graph_src : "<expr>");
-	} else {
-		snprintf(line, sizeof(line), "* plot: (none)  use :plot EXPR");
-	}
-	if (u->cols > 0 && u->cols < (int)sizeof(line))
-		line[u->cols] = 0;
-	(void)vec_draw_text_row(&u->fb, 1, line, fg, panel_bg, -1, 0);
-
-	/* Pixel plot area: rows 2..rows-2 (inclusive). */
-	int plot_y = 2 * VEC_FONT_H;
-	int plot_h = (u->rows - 3) * VEC_FONT_H;
+	/* Pixel plot area: rows 1..rows-2 (inclusive). */
+	int plot_y = VEC_FONT_H;
+	int plot_h = (u->rows - 2) * VEC_FONT_H;
 	if (plot_h > 0) {
 		char perr[96];
 		perr[0] = 0;
@@ -710,6 +797,20 @@ static void ui_switch_tab(struct ui_state *u, enum vec_tab tab)
 		return;
 	u->tab = tab;
 	u->show_help = 0;
+
+	switch (u->tab) {
+	case TAB_PLOT:
+		ui_set_message(u, "arrows pan | +/- zoom | PgUp/PgDn zoom | a autoscale | c term");
+		break;
+	case TAB_STACK:
+		u->stack_sel = 0;
+		u->stack_top = 0;
+		break;
+	case TAB_TERMINAL:
+	default:
+		ui_set_message(u, "Enter eval | Ctrl+G plot | F2 plot | F3 stack | :clear");
+		break;
+	}
 }
 
 static void ui_handle_help_key(struct ui_state *u, vec_key k)
