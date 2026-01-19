@@ -1,5 +1,6 @@
 #include "vec_eval.h"
 #include "vec_cas.h"
+#include "vec_linalg.h"
 #include "vec_matrix.h"
 
 #include <math.h>
@@ -1020,6 +1021,62 @@ static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const v
 				goto done;
 			}
 		}
+	}
+
+	/* Linear algebra builtins. */
+	if (!strcmp(name, "solve")) {
+		if (argc != 2 || args[0].kind != VEC_VALUE_MATRIX) {
+			snprintf(err, errsz, "eval: solve(A, b)");
+			goto fail;
+		}
+		const vec_value *A = &args[0];
+		if (A->rows != A->cols) {
+			snprintf(err, errsz, "eval: solve expects square matrix");
+			goto fail;
+		}
+		int n = A->rows;
+
+		if (args[1].kind == VEC_VALUE_ARRAY) {
+			if ((int)args[1].len != n) {
+				snprintf(err, errsz, "eval: solve expects len(b)==rows(A)");
+				goto fail;
+			}
+			double *x = NULL;
+			vec_mat_err rc = vec_solve_linear_system(A->mat, args[1].arr, n, &x);
+			if (rc == VEC_MAT_ERR_NOMEM) {
+				snprintf(err, errsz, "eval: out of memory");
+				goto fail;
+			}
+			if (rc != VEC_MAT_OK) {
+				snprintf(err, errsz, "eval: solve: singular system");
+				goto fail;
+			}
+			*out = vec_value_array(x, (size_t)n);
+			goto done;
+		}
+
+		if (args[1].kind == VEC_VALUE_MATRIX) {
+			const vec_value *B = &args[1];
+			if (B->rows != n) {
+				snprintf(err, errsz, "eval: solve expects rows(b)==rows(A)");
+				goto fail;
+			}
+			double *x = NULL;
+			vec_mat_err rc = vec_solve_linear_system_multi(A->mat, B->mat, n, B->cols, &x);
+			if (rc == VEC_MAT_ERR_NOMEM) {
+				snprintf(err, errsz, "eval: out of memory");
+				goto fail;
+			}
+			if (rc != VEC_MAT_OK) {
+				snprintf(err, errsz, "eval: solve: singular system");
+				goto fail;
+			}
+			*out = vec_value_matrix(n, B->cols, x);
+			goto done;
+		}
+
+		snprintf(err, errsz, "eval: solve expects b as array or matrix");
+		goto fail;
 	}
 
 	/* Vector builtins (Array helpers). */
