@@ -1,0 +1,5 @@
+package mc
+if-file mc
+
+f 0755 /usr/bin/mc            mc
+
