@@ -35,17 +35,18 @@ int rd_transfer(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
     } else {
         rd_src_address = dev_start[minor];
 
-        if (rawflag) {
+        if (rawflag == 1) {
             if (d_blkoff(9))
                 return -1;
             /* rawflag == 1, userspace transfer */
         }
-        rd_dst_userspace = rawflag;
+        rd_dst_userspace = (rawflag == 1);
 
-        rd_dst_address = (uint16_t)udata.u_dptr;
+        rd_dst_address = (uaddr_t)(uintptr_t)udata.u_dptr;
         rd_src_address += ((uint32_t)udata.u_block) << BLKSHIFT;
 
-        if (rd_src_address >= dev_limit[minor]) {
+        if (rd_src_address >= dev_limit[minor] ||
+            (rd_src_address + rd_cpy_count) > dev_limit[minor]) {
            udata.u_error = EIO;
            return -1;
         }

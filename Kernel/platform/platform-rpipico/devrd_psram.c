@@ -13,7 +13,7 @@
 #include "mangle.h"
 
 uint32_t rd_src_address;
-uint16_t rd_dst_address;
+uaddr_t rd_dst_address;
 bool rd_dst_userspace;
 uint16_t rd_cpy_count;
 uint8_t rd_reverse;
@@ -96,7 +96,10 @@ int rd_read(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
 	used(flag);
 	rd_reverse = 0;
-	rd_cpy_count = rawflag ? udata.u_count : BLKSIZE;
+	if (rawflag == 1)
+		rd_cpy_count = udata.u_count;
+	else
+		rd_cpy_count = (uint16_t)(udata.u_nblock << BLKSHIFT);
 	return rd_transfer(minor, rawflag, 0);
 }
 
@@ -104,6 +107,9 @@ int rd_write(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag)
 {
 	used(flag);
 	rd_reverse = 1;
-	rd_cpy_count = rawflag ? udata.u_count : BLKSIZE;
+	if (rawflag == 1)
+		rd_cpy_count = udata.u_count;
+	else
+		rd_cpy_count = (uint16_t)(udata.u_nblock << BLKSHIFT);
 	return rd_transfer(minor, rawflag, 0);
 }

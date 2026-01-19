@@ -25,7 +25,7 @@ int rd_transfer(uint_fast8_t minor, uint_fast8_t rawflag, uint_fast8_t flag);
  */
 
 extern uint32_t rd_src_address;
-extern uint16_t rd_dst_address;
+extern uaddr_t  rd_dst_address;
 extern bool     rd_dst_userspace;
 extern uint16_t rd_cpy_count;
 extern uint8_t  rd_reverse;      /* reverse the copy direction: false=read, true=write */
