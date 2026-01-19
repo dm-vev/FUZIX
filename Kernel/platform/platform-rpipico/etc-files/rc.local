@@ -1,0 +1,42 @@
+#!/bin/sh
+
+CONF=/etc/picocalc.conf
+if [ -r "$CONF" ]; then
+	. "$CONF"
+fi
+
+if [ -x /usr/bin/picoctl ]; then
+	if [ -n "$LCD_BACKLIGHT" ]; then
+		/usr/bin/picoctl backlight "$LCD_BACKLIGHT" >/dev/null 2>&1
+	fi
+	if [ -n "$KBD_BACKLIGHT" ]; then
+		/usr/bin/picoctl kbdlight "$KBD_BACKLIGHT" >/dev/null 2>&1
+	fi
+
+	ARGS=""
+	if [ -n "$KBD_POLL_US" ]; then
+		ARGS="$ARGS kbd_us=$KBD_POLL_US"
+	fi
+	if [ -n "$STATUS_POLL_US" ]; then
+		ARGS="$ARGS status_us=$STATUS_POLL_US"
+	fi
+	if [ -n "$BACKOFF_MIN_US" ]; then
+		ARGS="$ARGS backoff_min_us=$BACKOFF_MIN_US"
+	fi
+	if [ -n "$BACKOFF_MAX_US" ]; then
+		ARGS="$ARGS backoff_max_us=$BACKOFF_MAX_US"
+	fi
+	if [ -n "$FIFO_MAX" ]; then
+		ARGS="$ARGS fifo_max=$FIFO_MAX"
+	fi
+	if [ -n "$ARGS" ]; then
+		/usr/bin/picoctl pollcfg set $ARGS >/dev/null 2>&1
+	fi
+fi
+
+if [ "${PICOCALCD:-0}" -ne 0 ] && [ -x /usr/bin/picocalcd ]; then
+	/usr/bin/picocalcd --interval "${PICOCALCD_INTERVAL:-1}" --out "${PICOCALCD_OUT:-/tmp/picocalc.status}" </dev/null >/dev/null 2>&1 &
+fi
+
+exit 0
+

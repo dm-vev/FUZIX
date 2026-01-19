@@ -5,3 +5,6 @@ disable-pkg platform-rpipico
 f 0755 /usr/bin/picoctl utils/picoctl
 f 0755 /usr/bin/picogpio utils/picogpio
 f 0755 /usr/bin/picocalcd utils/picocalcd
+
+f 0644 /etc/picocalc.conf etc-files/picocalc.conf
+f 0755 /etc/rc.local      etc-files/rc.local
