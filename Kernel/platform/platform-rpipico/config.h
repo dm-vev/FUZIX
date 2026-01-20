@@ -194,7 +194,11 @@ extern uint8_t progbase[USERMEM];
 #define PICOCALC_I2C_BACKOFF_MAX_US 500000
 
 #define TTYDEV   BOOT_TTY /* Device used by kernel for messages, panics */
+#if TOTALMEM <= 140
+#define NBUFS    14       /* Number of block buffers (keep pico in RAM) */
+#else
 #define NBUFS    20       /* Number of block buffers */
+#endif
 #define NMOUNTS	 4	  /* Number of mounts at a time */
 
 #define MAX_BLKDEV	4
