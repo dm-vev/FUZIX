@@ -13,8 +13,57 @@
 #elif (BLKSIZE == 512)
 #define SMOUNTED 12742   /* Magic number to specify mounted filesystem */
 #define SMOUNTED_WRONGENDIAN 50737   /* byteflipped */
+#define SMOUNTED_V2 12744 /* largefs v2 (32-bit blocks + triple indirect) */
+#define SMOUNTED_V2_WRONGENDIAN 51249U /* byteflipped */
 #define DIR_LEN	32
 #define IPERBLK 8
+
+/* On-disk structures for largefs (512-byte blocks only). */
+typedef struct fuzix_dinode_v2 {
+    uint16_t i_mode;
+    uint16_t i_nlink;
+    uint16_t i_uid;
+    uint16_t i_gid;
+    uint32_t i_size;
+    uint32_t i_atime;
+    uint32_t i_mtime;
+    uint32_t i_ctime;
+    uint32_t i_addr[10];
+} fuzix_dinode_v2;               /* Exactly 64 bytes long! */
+
+/*
+ * NOTE: Padding is explicit to make the on-disk layout stable across
+ * compilers/architectures while keeping 32-bit fields aligned.
+ */
+typedef struct fuzix_filesys_v2 {
+    uint16_t s_mounted;
+    uint16_t s_pad0;
+    uint32_t s_isize;
+    uint32_t s_fsize;
+    uint16_t s_nfree;
+    uint16_t s_pad1;
+    uint32_t s_free[50];
+    int16_t  s_ninode;
+    uint16_t s_inode[50];
+    uint8_t  s_fmod;
+    uint8_t  s_timeh;
+    uint32_t s_time;
+    uint32_t s_tfree;
+    uint16_t s_tinode;
+    uint8_t  s_shift;
+    uint8_t  s_pad2;
+} fuzix_filesys_v2;
+
+typedef struct fuzix_freelist_v1 {
+    uint16_t nfree;
+    uint16_t free[50];
+} fuzix_freelist_v1;
+
+typedef struct fuzix_freelist_v2 {
+    uint16_t nfree;
+    uint16_t pad;
+    uint32_t free[50];
+} fuzix_freelist_v2;
 #endif
 #define CMAGIC   24721
 #define UFTSIZE 10
