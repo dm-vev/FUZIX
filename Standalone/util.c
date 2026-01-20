@@ -168,25 +168,27 @@ const uint8_t ide_magic[8] = {
 	'1','D','E','D','1','5','C','0'
 };
 
-static int bdread_raw(unsigned int blk, uint8_t *dp)
-{
-	if (lseek(dev_fd, dev_offset + blk * 512,
-		  SEEK_SET) == -1)
-		perror("lseek");
-	if (read(dev_fd, dp, 512) != 512)
-		panic("read() failed");
-	if (swapped)
+	static int bdread_raw(unsigned int blk, uint8_t *dp)
+	{
+		off_t off = (off_t)dev_offset + ((off_t)blk) * 512;
+		if (lseek(dev_fd, off, SEEK_SET) == (off_t)-1)
+			perror("lseek");
+		if (read(dev_fd, dp, 512) != 512)
+			panic("read() failed");
+		if (swapped)
 		bdswapkeep(dp);
 	return 0;
 }
 
-static int bdwrite_raw(unsigned int blk, uint8_t *dp)
-{
-	lseek(dev_fd, dev_offset + blk * 512, SEEK_SET);
-	if (write(dev_fd, bdswap(dp), 512) != 512)
-		panic("write() failed");
-	return 0;
-}
+	static int bdwrite_raw(unsigned int blk, uint8_t *dp)
+	{
+		off_t off = (off_t)dev_offset + ((off_t)blk) * 512;
+		if (lseek(dev_fd, off, SEEK_SET) == (off_t)-1)
+			perror("lseek");
+		if (write(dev_fd, bdswap(dp), 512) != 512)
+			panic("write() failed");
+		return 0;
+	}
 
 static int bdopen_raw(const char *name, int addflags)
 {

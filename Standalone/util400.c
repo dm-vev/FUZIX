@@ -89,8 +89,8 @@ static void bdswapkeep(uint8_t * p)
 
 static int bdread_raw(unsigned int blk, uint8_t *dp)
 {
-	if (lseek(dev_fd, dev_offset + blk * 400,
-		  SEEK_SET) == -1)
+	off_t off = (off_t)dev_offset + ((off_t)blk) * 400;
+	if (lseek(dev_fd, off, SEEK_SET) == (off_t)-1)
 		perror("lseek");
 	if (read(dev_fd, dp, 400) != 400)
 		panic("read() failed");
@@ -101,7 +101,9 @@ static int bdread_raw(unsigned int blk, uint8_t *dp)
 
 static int bdwrite_raw(unsigned int blk, uint8_t *dp)
 {
-	lseek(dev_fd, dev_offset + blk * 400, SEEK_SET);
+	off_t off = (off_t)dev_offset + ((off_t)blk) * 400;
+	if (lseek(dev_fd, off, SEEK_SET) == (off_t)-1)
+		perror("lseek");
 	if (write(dev_fd, bdswap(dp), 400) != 400)
 		panic("write() failed");
 	return 0;

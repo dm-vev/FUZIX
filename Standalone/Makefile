@@ -1,7 +1,7 @@
 CC=gcc
 #Use this for playing with the experimental libdsk support
 #CCOPTS=-O2 -DLIBDSK -ldsk -g -Wall -pedantic -Wno-char-subscripts -Wno-deprecated-declarations
-CCOPTS=-O2 -g -Wall -pedantic -Wno-char-subscripts -Wno-deprecated-declarations
+CCOPTS=-O2 -g -Wall -pedantic -Wno-char-subscripts -Wno-deprecated-declarations -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE
 
 TARGETS=mkfs fsck ucp chmem size elf2aout mkftl sethint mkfs400 fsck400
 
