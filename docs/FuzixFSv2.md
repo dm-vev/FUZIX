@@ -83,3 +83,14 @@ This yields a max file size of approximately:
 - Userspace tools (mkfs/fsck/statvfs/df) must understand both formats to be
   useful on mixed systems.
 
+## Tooling
+
+Host utilities in `Standalone/` support creating and checking v2 filesystems:
+
+- Create a v2 filesystem (512-byte blocks only):
+  - `Standalone/mkfs -2 <device|image> <isize> <fsize>`
+- Check/repair:
+  - `Standalone/fsck -y <device|image>`
+
+For large partitions (e.g. SD cards), creating/checking the filesystem on the
+host is recommended.
