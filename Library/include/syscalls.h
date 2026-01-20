@@ -37,6 +37,21 @@ struct _uzisysinfoblk {
 #define __FILESYS_TABSIZE 50
 
 struct _uzifilesys {
+#ifdef FUZIX_LARGEFS
+    int16_t       s_mounted;
+    uint32_t      s_isize;
+    uint32_t      s_fsize;
+    uint16_t      s_nfree;
+    uint32_t      s_free[__FILESYS_TABSIZE];
+    int16_t       s_ninode;
+    uint16_t      s_inode[__FILESYS_TABSIZE];
+    uint8_t       s_fmod;
+    uint8_t       s_timeh;
+    uint32_t      s_time;
+    uint32_t      s_tfree;
+    uint16_t      s_tinode;
+    uint8_t	  s_shift;
+#else
     int16_t       s_mounted;
     uint16_t      s_isize;
     uint16_t      s_fsize;
@@ -50,6 +65,7 @@ struct _uzifilesys {
     uint16_t      s_tfree;
     uint16_t      s_tinode;
     uint8_t	  s_shift;
+#endif
 };
 
 struct _sockio {
@@ -199,5 +215,4 @@ extern int ftruncate(int fd, off_t offset);
 extern int __netcall(void *argbuf);
 
 #endif	/* __SYSCALLS_H */
-
 

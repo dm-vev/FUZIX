@@ -62,8 +62,13 @@ typedef uint16_t nlink_t;
 typedef int16_t pid_t;
 typedef uint16_t ino_t;
 
+#ifdef FUZIX_LARGEFS
+typedef uint32_t fsblkcnt_t;
+typedef uint32_t fsfilcnt_t;
+#else
 typedef uint16_t fsblkcnt_t;
 typedef uint16_t fsfilcnt_t;
+#endif
 
 #if defined(NO_64BIT)
 typedef uint32_t time_t;

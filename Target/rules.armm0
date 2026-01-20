@@ -4,7 +4,7 @@ ASM = arm-none-eabi-as
 AR = arm-none-eabi-ar
 STRIP = arm-none-eabi-strip
 LINKER = arm-none-eabi-ld
-CFLAGS = -mcpu=Cortex-M0plus -ffunction-sections -fdata-sections -fno-strict-aliasing -fomit-frame-pointer -fno-builtin -Wall -g -Os -isystem $(ROOT)/Library/include
+CFLAGS = -mcpu=Cortex-M0plus -ffunction-sections -fdata-sections -fno-strict-aliasing -fomit-frame-pointer -fno-builtin -Wall -g -Os -isystem $(ROOT)/Library/include -DFUZIX_LARGEFS
 CFLAGS += -Wno-int-conversion -Wno-implicit-int
 LINKER_OPT = -L$(ROOT)/Library/libs -lc$(PLATFORM) -pie -static -no-dynamic-linker -z max-page-size=4 --gc-sections
 LIBGCCDIR = $(dir $(shell $(CC) $(CFLAGS) -print-libgcc-file-name))
