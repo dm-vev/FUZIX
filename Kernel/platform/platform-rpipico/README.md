@@ -110,16 +110,28 @@ To flash the image either:
 
 ### Installing filesystem onto SD card
 
-If you want to use an SD card, note that only filesystems up to 32MB are
-supported.
+If you want to use an SD card, you can use either a small legacy filesystem
+(v1, up to 32MB) or a large filesystem (v2 / largefs) for larger partitions
+(e.g. 32GB).
 
 Filesystem image files are located in `FUZIX/Images/rpipico`.
 
-Partition SD card on your computer using MBR partition scheme then create 32MB
-partition. If using Linux or MacOS you can then copy `filesys.img` or
-`filesys8.img` onto the SD card using `dd` command.
+Partition SD card on your computer using MBR partition scheme.
+
+For a small filesystem image, you can copy `filesystem.img` onto the SD card
+partition (example shown for Linux):
 
 ``` dd if=filesystem.img of=/dev/sdXn oflag=direct bs=8192 ```
+
+For a large partition, create a v2 filesystem directly on the partition from the
+host tools:
+
+```
+cd FUZIX/Standalone
+make mkfs fsck
+sudo ./mkfs -2 /dev/sdXn 8194 $(blockdev --getsz /dev/sdXn)
+sudo ./fsck -y /dev/sdXn
+```
 
 The first thing you probably want to do is `stty erase '^?'` to make the DELETE
 key in your terminal work properly. (Use the `levee` editor to add it to
