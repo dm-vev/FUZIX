@@ -404,7 +404,8 @@ sub gen_ucp {
 # Create disk image: create empty disk, apply ucp script, run fsck.
 sub build_dsk {
     my $swizzle = $args{endian} eq 'little' ? '' : '-X';
-    if (system "../mkfs $swizzle $args{file} $args{isize} $args{bsize}") {
+    my $v2 = $args{mkfs_v2} ? '-2' : '';
+    if (system "../mkfs $v2 $swizzle $args{file} $args{isize} $args{bsize}") {
         my $status = $? >> 8;
         die "ERROR mkfs failed - exit status $status\n";
     }
@@ -431,6 +432,7 @@ sub cmdline_args {
     $args{bsize} = 65535;
     $args{verbose} = 0;
     $args{fsck_args} = '';
+    $args{mkfs_v2} = 0;
 
     while (my $arg = shift @ARGV) {
         $arg = lc $arg;
@@ -455,9 +457,12 @@ sub cmdline_args {
             $args{isize} = shift @ARGV;
             $args{bsize} = shift @ARGV;
         }
-	elsif ($arg eq '-y') {
-	    $args{fsck_args} = '-y';
-	}
+        elsif ($arg eq '-2') {
+            $args{mkfs_v2} = 1;
+        }
+		elsif ($arg eq '-y') {
+		    $args{fsck_args} = '-y';
+		}
         else {
             print "ERROR unrecognised option $arg -- try -h for help\n";
             exit 1;
@@ -481,8 +486,9 @@ Options:
 
 -x           swizzle disk image (for big-endian processors like 6809). Default: no swizzle.
 -f FILENAME  filename of disk image. Default: $args{file}
--g N M       disk geometry N=inode size, M=block size. Default: $args{isize} $args{bsize}
--y           run fsck without interactive prompt
+	-g N M       disk geometry N=inode size, M=block size. Default: $args{isize} $args{bsize}
+	-2           create a v2 (largefs) filesystem image
+	-y           run fsck without interactive prompt
 
 EOF
 exit 1;
