@@ -244,6 +244,14 @@ arg_t _link(void)
 		goto nogood;
 	}
 
+#ifdef CONFIG_FATFS
+	if (fs_tab[ino->c_super].m_fstype == FSTYPE_FAT) {
+		i_deref(parent2);
+		udata.u_error = EOPNOTSUPP;
+		goto nogood;
+	}
+#endif
+
 	i_lock(parent2);
 	if (!ch_link(parent2, (uint8_t *)"", lastname, ino)) {
 		i_unlock_deref(parent2);

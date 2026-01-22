@@ -2003,6 +2003,7 @@ bool fat_ch_link(inoptr wd, uint8_t *oldname, uint8_t *newname, inoptr nindex)
                     }
                 }
                 fat_lfn_reset(&lfn);
+                setftime(wd, A_TIME | M_TIME | C_TIME);
                 return true;
             }
 
