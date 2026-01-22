@@ -157,6 +157,11 @@ blkno_t bmap(inoptr ip, blkno_t bn, unsigned int rwflg)
     dev = ip->c_dev;
     mnt = &fs_tab[ip->c_super];
 
+#ifdef CONFIG_FATFS
+    if (mnt->m_fstype == FSTYPE_FAT)
+        return fat_bmap(ip, bn, rwflg);
+#endif
+
     /* v2 (largefs): 7 direct + single + double + triple indirect (32-bit ptrs). */
     if (mnt->m_fs.s_mounted == SMOUNTED_V2) {
         const uint32_t ndirect = 7;
@@ -324,11 +329,20 @@ blkno_t bmap(inoptr ip, blkno_t bn, unsigned int rwflg)
     blkno_t nb;
     int sh;
     uint16_t dev;
+#ifdef CONFIG_FATFS
+    struct mount *mnt;
+#endif
 
     if(getmode(ip) == MODE_R(F_BDEV))
         return(bn);
 
     dev = ip->c_dev;
+
+#ifdef CONFIG_FATFS
+    mnt = &fs_tab[ip->c_super];
+    if (mnt->m_fstype == FSTYPE_FAT)
+        return fat_bmap(ip, bn, rwflg);
+#endif
 
     /* blocks 0..17 are direct blocks
     */

@@ -85,6 +85,13 @@ void readi(regptr inoptr ino, uint_fast8_t flag)
 
 	switch (getmode(ino)) {
 	case MODE_R(F_DIR):
+#ifdef CONFIG_FATFS
+		if (fs_tab[ino->c_super].m_fstype == FSTYPE_FAT) {
+			fat_readi_dir(ino, flag);
+			break;
+		}
+#endif
+		/* fall through */
 	case MODE_R(F_REG):
 		/* FIXME: we end up doing the ino - udata comparison 3 times, fix this */
 		/* See if end of file will limit read */

@@ -199,6 +199,11 @@ nodir:
 
 inoptr srch_dir(register inoptr wd, uint8_t *compname)
 {
+#ifdef CONFIG_FATFS
+    if (fs_tab[wd->c_super].m_fstype == FSTYPE_FAT)
+        return fat_srch_dir(wd, compname);
+#endif
+
     register struct direct *d;
     register blkno_t curblock;
     register struct blkbuf *buf;
