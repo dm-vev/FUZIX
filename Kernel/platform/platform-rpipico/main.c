@@ -61,11 +61,26 @@ uint_fast8_t plt_param(char* p)
 
 void fatal_exception_handler(struct extended_exception_frame* eh)
 {
+    /* SCB fault status registers (useful on RP2350 / Cortex-M33; safe to read on M0+ too). */
+    volatile uint32_t * const SCB_CFSR  = (uint32_t *)0xE000ED28;
+    volatile uint32_t * const SCB_HFSR  = (uint32_t *)0xE000ED2C;
+    volatile uint32_t * const SCB_DFSR  = (uint32_t *)0xE000ED30;
+    volatile uint32_t * const SCB_MMFAR = (uint32_t *)0xE000ED34;
+    volatile uint32_t * const SCB_BFAR  = (uint32_t *)0xE000ED38;
+    volatile uint32_t * const SCB_AFSR  = (uint32_t *)0xE000ED3C;
+
     kprintf("FLAGRANT SYSTEM ERROR! EXCEPTION %d\n", eh->cause);
     kprintf(" r0=%p r1=%p  r2=%p  r3=%p\n", eh->r0, eh->r1, eh->r2, eh->r3);
     kprintf(" r4=%p r5=%p  r6=%p  r7=%p\n", eh->r4, eh->r5, eh->r6, eh->r7);
     kprintf(" r8=%p r9=%p r10=%p r11=%p\n", eh->r8, eh->r9, eh->r10, eh->r11);
-    kprintf("r12=%p sp=%p  lr=%p  pc=%p\n", eh->r12, eh->sp, eh->lr, eh->pc);
+    kprintf("r12=%p sp=%p  lr=%p  pc=%p psr=%p\n", eh->r12, eh->sp, eh->lr, eh->pc, eh->psr);
+    kputs("SCB CFSR="); kputhex(*SCB_CFSR);
+    kputs(" HFSR="); kputhex(*SCB_HFSR);
+    kputs(" DFSR="); kputhex(*SCB_DFSR);
+    kputs(" MMFAR="); kputhex(*SCB_MMFAR);
+    kputs(" BFAR="); kputhex(*SCB_BFAR);
+    kputs(" AFSR="); kputhex(*SCB_AFSR);
+    kputs("\n");
     kprintf("PROGBASE=%p PROGLOAD=%p PROGTOP=%p\n", PROGBASE, PROGLOAD, PROGTOP);
     kprintf("UDATA=%p KSTACK=%p-%p\n", &udata, &udata+1, ((uint32_t)&udata) + UDATA_SIZE);
     kprintf("user mode relative: lr=%p pc=%p isp=%p brk=%p\n",
@@ -118,4 +133,3 @@ int main(void)
 }
 
 /* vim: sw=4 ts=4 et: */
-

@@ -76,9 +76,14 @@
 #define CONFIG_PTY_DEV
 
 /* Built in NAND flash. Warning, it's unstable. */
-//#define CONFIG_PICO_FLASH
+#define CONFIG_PICO_FLASH
 
 /* PicoCalc onboard PSRAM */
+#ifndef ENABLE_PSRAM
+#define ENABLE_PSRAM 1
+#endif
+
+#if ENABLE_PSRAM
 #define CONFIG_PSRAM
 #define CONFIG_RAMDISK
 #define PSRAM_SIZE_BYTES (8 * 1024 * 1024)
@@ -93,6 +98,16 @@
 #define DEV_RD_RAM_START ((uint32_t)PSRAM_FB_PAGES << 12)
 #define DEV_RD_ROM_SIZE  0
 #define DEV_RD_RAM_SIZE  ((uint32_t)DEV_RD_RAM_PAGES << 12)
+#else
+#undef CONFIG_PSRAM
+#undef CONFIG_RAMDISK
+#define DEV_RD_ROM_PAGES 0
+#define DEV_RD_RAM_PAGES 0
+#define DEV_RD_ROM_START 0
+#define DEV_RD_RAM_START 0
+#define DEV_RD_ROM_SIZE  0
+#define DEV_RD_RAM_SIZE  0
+#endif
 
 /* PCM audio stack (/dev/audio, /dev/audio0) */
 #define CONFIG_AUDIO_PCM
@@ -213,7 +228,14 @@ extern uint8_t progbase[USERMEM];
 /* Prevent name clashes wish the Pico SDK */
 #define BOOTDEVICENAMES "hd#"
 
-#define BOOTDEVICE 2
+/*
+ * Default root device selection:
+ * - If the MBR contains a boot command line, it will be used.
+ * - Otherwise the kernel will prompt for a boot device (e.g. "hda" or "hdb1").
+ *
+ * To force a fixed root device without prompting, define BOOTDEVICE here.
+ */
+/* #define BOOTDEVICE 2 */
 
 #define MANGLED 1
 #include "mangle.h"

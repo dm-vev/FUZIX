@@ -8,6 +8,12 @@ ifndef SUBTARGET
 SUBTARGET=pico # set default subtarget
 endif
 
+# Optional: disable PicoCalc PSRAM support (ramdisk + framebuffer).
+# Example: make SUBTARGET=pico2 ENABLE_PSRAM=0 build/fuzix.elf
+ifndef ENABLE_PSRAM
+ENABLE_PSRAM=1
+endif
+
 ifeq ($(SUBTARGET),pico)
 TOTALMEM=140
 endif
@@ -44,7 +50,7 @@ build/fuzix.elf: ../../version.c build/Makefile $(PLATFORM_DEPS)
 
 build/Makefile: CMakeLists.txt $(wildcard ../../*.[chS]) $(wildcard ../../*/*.[chS])
 	mkdir -p build
-	(cd build && VERBOSE=1 cmake -DPICO_BOARD=${SUBTARGET} -DTOTALMEM=${TOTALMEM} ..)
+	(cd build && VERBOSE=1 cmake -DPICO_BOARD=${SUBTARGET} -DTOTALMEM=${TOTALMEM} -DENABLE_PSRAM=${ENABLE_PSRAM} ..)
 
 image:: world
 	./update-flash.sh

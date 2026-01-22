@@ -8,12 +8,15 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_BUILD_TYPE Debug)
 set(PICO_COPY_TO_RAM 1)
 option(TOTALMEM "specify how much TOTALMEM is present" 0)
+option(ENABLE_PSRAM "Enable PicoCalc PSRAM (ramdisk + framebuffer)" ON)
 
 add_compile_definitions(
 		PICO_HEAP_SIZE=0x0
 		PICO_NO_BINARY_INFO=1
 		PICO_TIME_DEFAULT_ALARM_POOL_DISABLED
+		PICO_PANIC_FUNCTION=fuzix_pico_panic
     TOTALMEM=${TOTALMEM}
+		ENABLE_PSRAM=$<BOOL:${ENABLE_PSRAM}>
 		)
 
 pico_sdk_init()
@@ -30,8 +33,6 @@ add_executable(fuzix
 	devices.c
 	devflash.c
 	devsdspi.c
-	devrd_psram.c
-	devfb.c
 	devaudio_stream.c
 	devaudio_pcm.c
 	lcdspi.c
@@ -47,7 +48,7 @@ add_executable(fuzix
 	core1.c
 	devgpio.c
 	usbdescriptors.c
-	psram_spi.c
+	pico_panic.c
 	../../dev/blkdev.c
 	../../dev/devrd.c
 	../../dev/mbr.c
@@ -87,6 +88,27 @@ add_executable(fuzix
 	../../network.c
 )
 
+if (ENABLE_PSRAM)
+	target_sources(fuzix PRIVATE
+		devrd_psram.c
+		devfb.c
+		psram_spi.c
+	)
+	pico_generate_pio_header(fuzix ${CMAKE_CURRENT_LIST_DIR}/psram_spi.pio)
+	target_compile_definitions(fuzix PRIVATE
+		PSRAM_MUTEX
+		PSRAM_PIN_CS=20
+		PSRAM_PIN_SCK=21
+		PSRAM_PIN_MOSI=2
+		PSRAM_PIN_MISO=3
+	)
+else()
+	target_sources(fuzix PRIVATE
+		devrd_none.c
+		devfb_none.c
+	)
+endif()
+
 target_link_libraries(fuzix
 	pico_stdlib
 	pico_multicore
@@ -97,16 +119,6 @@ target_link_libraries(fuzix
 	hardware_spi
 	hardware_i2c
 	tinyusb_device
-)
-
-pico_generate_pio_header(fuzix ${CMAKE_CURRENT_LIST_DIR}/psram_spi.pio)
-
-target_compile_definitions(fuzix PRIVATE
-	PSRAM_MUTEX
-	PSRAM_PIN_CS=20
-	PSRAM_PIN_SCK=21
-	PSRAM_PIN_MOSI=2
-	PSRAM_PIN_MISO=3
 )
 
 pico_set_float_implementation(fuzix none)

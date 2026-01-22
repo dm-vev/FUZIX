@@ -101,7 +101,9 @@ void device_init(void)
 #ifdef CONFIG_NET
 	netdev_init();
 #endif
+#ifdef CONFIG_PSRAM
 	psram_dev_init();
+#endif
     sd_rawinit();
     devsd_init();
 }

@@ -205,4 +205,3 @@ dofork:
     pop {r5, r6, r7, pc}
 
 // vim: sw=4 ts=4 et:
-
