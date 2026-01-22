@@ -559,6 +559,18 @@ static uint16_t fat_lfn_word(const uint8_t *e, uint_fast8_t idx)
     return fat_le16(e + off);
 }
 
+static void fat_lfn_put_word(uint8_t *e, uint_fast8_t idx, uint16_t v)
+{
+    uint16_t off;
+    if (idx < 5)
+        off = (uint16_t)(1 + idx * 2);
+    else if (idx < 11)
+        off = (uint16_t)(14 + (idx - 5) * 2);
+    else
+        off = (uint16_t)(28 + (idx - 11) * 2);
+    fat_put16(e + off, v);
+}
+
 static void fat_lfn_take(struct fat_lfn_state *st, const uint8_t *e)
 {
     uint8_t ord = e[0];
@@ -1298,157 +1310,470 @@ static int fat_mark_deleted(struct mount *m, uint32_t sector, uint16_t off)
     return bfree(buf, 1);
 }
 
-static int fat_sfn_from_name(const uint8_t *name, uint8_t *sfn)
+static bool fat_is_invalid_lfn_char(uint8_t c)
+{
+    if (c < 0x20 || c == 0x7F)
+        return true;
+    switch (c) {
+    case '\"':
+    case '*':
+    case '/':
+    case ':':
+    case '<':
+    case '>':
+    case '?':
+    case '\\':
+    case '|':
+        return true;
+    default:
+        return false;
+    }
+}
+
+static int fat_lfn_from_name(const uint8_t *name, uint16_t *out, uint_fast8_t *out_len)
 {
     uint_fast8_t i;
-    uint_fast8_t p = 0;
-    uint_fast8_t ext = 8;
+    uint_fast8_t n = 0;
+
+    if (name[0] == '\0' || name[0] == ' ') {
+        udata.u_error = EINVAL;
+        return -1;
+    }
+
+    for (i = 0; i < FILENAME_LEN && name[i] && name[i] != '/'; i++) {
+        uint8_t c = name[i];
+
+        /* Keep names ASCII-only for now; kernel paths are byte strings. */
+        if (c >= 0x80 || fat_is_invalid_lfn_char(c)) {
+            udata.u_error = EINVAL;
+            return -1;
+        }
+        out[n++] = (uint16_t)c;
+    }
+
+    if (n == 0 || out[n - 1] == (uint16_t)' ' || out[n - 1] == (uint16_t)'.') {
+        udata.u_error = EINVAL;
+        return -1;
+    }
+
+    *out_len = n;
+    return 0;
+}
+
+static bool fat_is_invalid_sfn_char(uint8_t c)
+{
+    if (c <= 0x20 || c >= 0x7F)
+        return true;
+    switch (c) {
+    case '\"':
+    case '*':
+    case '+':
+    case ',':
+    case '/':
+    case ':':
+    case ';':
+    case '<':
+    case '=':
+    case '>':
+    case '?':
+    case '[':
+    case '\\':
+    case ']':
+    case '|':
+        return true;
+    default:
+        return false;
+    }
+}
+
+/*
+ * Try to represent `name` as an 8.3 entry without an LFN.
+ *
+ * This requires strict 8.3 shape and also requires that case can be
+ * represented by the NTRes "lowercase" bits (ie not mixed-case).
+ */
+static int fat_try_make_sfn_exact(const uint8_t *name, uint8_t sfn[11], uint8_t *out_ntres)
+{
+    uint_fast8_t i;
     uint_fast8_t dot = 0xFF;
+    uint_fast8_t base_len = 0;
+    uint_fast8_t ext_len = 0;
+    uint8_t ntres = 0;
+    bool base_lower = false, base_upper = false;
+    bool ext_lower = false, ext_upper = false;
 
     memset(sfn, ' ', 11);
 
-    if (name[0] == '.' && name[1] == '\0') {
-        sfn[0] = '.';
-        return 0;
-    }
-    if (name[0] == '.' && name[1] == '.' && name[2] == '\0') {
-        sfn[0] = '.';
-        sfn[1] = '.';
-        return 0;
-    }
-
-    for (i = 0; i < FILENAME_LEN && name[i]; i++) {
+    for (i = 0; i < FILENAME_LEN && name[i] && name[i] != '/'; i++) {
         if (name[i] == '.') {
             if (dot != 0xFF)
-                return (udata.u_error = EINVAL), -1;
+                return -1;
             dot = i;
         }
     }
 
-    for (i = 0; i < FILENAME_LEN && name[i]; i++) {
-        uint8_t c = name[i];
+    if (dot != 0xFF && (dot == 0 || dot == i - 1U))
+        return -1;
 
-        if (c == '.') {
-            ext = 8;
-            p = 0;
+    for (i = 0; i < FILENAME_LEN && name[i] && name[i] != '/'; i++) {
+        uint8_t c = name[i];
+        bool is_ext = (dot != 0xFF && i > dot);
+
+        if (c == '.')
             continue;
+
+        if (fat_is_invalid_sfn_char(c))
+            return -1;
+
+        if (c >= 'a' && c <= 'z') {
+            if (is_ext)
+                ext_lower = true;
+            else
+                base_lower = true;
+            c = (uint8_t)(c - 0x20);
+        } else if (c >= 'A' && c <= 'Z') {
+            if (is_ext)
+                ext_upper = true;
+            else
+                base_upper = true;
         }
 
-        if (c <= 0x20 || c >= 0x7F)
-            return (udata.u_error = EINVAL), -1;
-        if (c == '\"' || c == '*' || c == '+' || c == ',' || c == '/' ||
-            c == ':' || c == ';' || c == '<' || c == '=' || c == '>' ||
-            c == '?' || c == '[' || c == '\\' || c == ']' || c == '|')
-            return (udata.u_error = EINVAL), -1;
+        if (is_ext) {
+            if (ext_len >= 3)
+                return -1;
+            sfn[8 + ext_len++] = c;
+        } else {
+            if (base_len >= 8)
+                return -1;
+            sfn[base_len++] = c;
+        }
+    }
+
+    if (base_len == 0)
+        return -1;
+
+    if (base_lower && base_upper)
+        return -1;
+    if (ext_lower && ext_upper)
+        return -1;
+
+    if (base_lower && !base_upper)
+        ntres |= 0x08;
+    if (ext_lower && !ext_upper)
+        ntres |= 0x10;
+
+    *out_ntres = ntres;
+    return 0;
+}
+
+/* Like fat_try_make_sfn_exact, but only checks that a canonical upper-case SFN
+   can be formed; this can be used as a short alias when an LFN exists. */
+static int fat_try_make_sfn_upper(const uint8_t *name, uint8_t sfn[11])
+{
+    uint_fast8_t i;
+    uint_fast8_t dot = 0xFF;
+    uint_fast8_t base_len = 0;
+    uint_fast8_t ext_len = 0;
+
+    memset(sfn, ' ', 11);
+
+    for (i = 0; i < FILENAME_LEN && name[i] && name[i] != '/'; i++) {
+        if (name[i] == '.') {
+            if (dot != 0xFF)
+                return -1;
+            dot = i;
+        }
+    }
+
+    if (dot != 0xFF && (dot == 0 || dot == i - 1U))
+        return -1;
+
+    for (i = 0; i < FILENAME_LEN && name[i] && name[i] != '/'; i++) {
+        uint8_t c = name[i];
+        bool is_ext = (dot != 0xFF && i > dot);
+
+        if (c == '.')
+            continue;
+
+        if (fat_is_invalid_sfn_char(c))
+            return -1;
 
         if (c >= 'a' && c <= 'z')
             c = (uint8_t)(c - 0x20);
 
-        if (dot != 0xFF && i > dot) {
-            if (ext >= 11)
-                return (udata.u_error = EINVAL), -1;
-            sfn[ext++] = c;
-            continue;
+        if (is_ext) {
+            if (ext_len >= 3)
+                return -1;
+            sfn[8 + ext_len++] = c;
+        } else {
+            if (base_len >= 8)
+                return -1;
+            sfn[base_len++] = c;
         }
-
-        if (p >= 8)
-            return (udata.u_error = EINVAL), -1;
-        sfn[p++] = c;
     }
 
-    if (sfn[0] == ' ')
-        return (udata.u_error = EINVAL), -1;
+    if (base_len == 0)
+        return -1;
 
     return 0;
 }
 
-static int fat_dir_find_free(struct mount *m, inoptr dir, uint32_t *out_raw_off)
+/* Return: 1 exists, 0 does not exist, -1 error. */
+static int fat_dir_sfn_exists(struct mount *m, inoptr dir, const uint8_t sfn[11])
 {
     uint32_t raw_off = 0;
-    uint32_t first_deleted = 0xFFFFFFFFUL;
-    uint32_t end_off = 0xFFFFFFFFUL;
     uint8_t e[32];
-
-    if (dir->c_fat.start_cluster == 0 && !(dir->c_fat.flags & FAT_I_ROOT)) {
-        uint32_t c;
-        if (fat_alloc_cluster(m, &c) != 0)
-            return -1;
-        dir->c_fat.start_cluster = c;
-        dir->c_fat.cache_cluster = c;
-        dir->c_fat.cache_index = 0;
-        dir->c_flags |= CDIRTY;
-        *out_raw_off = 0;
-        return 0;
-    }
 
     while (1) {
         int r = fat_dir_read_raw(m, dir, raw_off, e, NULL, NULL);
-        if (r == 0) {
-            if (e[0] == 0x00) {
-                end_off = raw_off;
-                break;
-            }
-            if (e[0] == 0xE5 && first_deleted == 0xFFFFFFFFUL)
-                first_deleted = raw_off;
-            raw_off += 32;
-            continue;
-        }
-        if (r != 1)
+        if (r == 1)
+            return 0;
+        if (r != 0)
             return -1;
-        break;
+
+        raw_off += 32;
+        if (e[0] == 0x00)
+            return 0;
+        if (e[0] == 0xE5)
+            continue;
+        if (e[11] == 0x0F)
+            continue;
+        if (memcmp(e, sfn, 11) == 0)
+            return 1;
+    }
+}
+
+static uint8_t fat_sfn_map_char(uint8_t c)
+{
+    if (c >= 'a' && c <= 'z')
+        c = (uint8_t)(c - 0x20);
+    if (c == ' ' || c == '.')
+        return 0;
+    if (fat_is_invalid_sfn_char(c))
+        return '_';
+    return c;
+}
+
+static void fat_sfn_sanitize_parts(const uint8_t *name,
+                                  uint8_t *base, uint_fast8_t *base_len,
+                                  uint8_t *ext, uint_fast8_t *ext_len)
+{
+    uint_fast8_t i;
+    uint_fast8_t len = 0;
+    int dot = -1;
+
+    *base_len = 0;
+    *ext_len = 0;
+
+    for (len = 0; len < FILENAME_LEN && name[len] && name[len] != '/'; len++) {
+        if (name[len] == '.' && len != 0)
+            dot = (int)len;
     }
 
-    if (first_deleted != 0xFFFFFFFFUL) {
-        *out_raw_off = first_deleted;
-        return 0;
+    for (i = 0; i < len; i++) {
+        uint8_t mapped;
+        bool is_ext;
+
+        if (dot >= 0 && i == (uint_fast8_t)dot)
+            continue;
+        is_ext = (dot >= 0 && (int)i > dot);
+        mapped = fat_sfn_map_char(name[i]);
+        if (!mapped)
+            continue;
+        if (is_ext) {
+            if (*ext_len < 3)
+                ext[(*ext_len)++] = mapped;
+        } else {
+            if (*base_len < 8)
+                base[(*base_len)++] = mapped;
+        }
     }
-    if (end_off != 0xFFFFFFFFUL) {
-        *out_raw_off = end_off;
-        return 0;
+}
+
+static uint_fast8_t fat_dec_len_u32(uint32_t v)
+{
+    uint_fast8_t d = 1;
+    while (v >= 10) {
+        v /= 10;
+        d++;
+    }
+    return d;
+}
+
+static void fat_put_dec_u32(uint32_t v, uint8_t *out, uint_fast8_t digits)
+{
+    while (digits--) {
+        out[digits] = (uint8_t)('0' + (v % 10));
+        v /= 10;
+    }
+}
+
+static int fat_make_sfn_tilde(struct mount *m, inoptr dir, const uint8_t *name, uint8_t sfn[11])
+{
+    uint8_t base[8];
+    uint8_t ext[3];
+    uint_fast8_t base_len;
+    uint_fast8_t ext_len;
+    uint32_t n;
+
+    fat_sfn_sanitize_parts(name, base, &base_len, ext, &ext_len);
+    if (base_len == 0) {
+        base[0] = 'F';
+        base[1] = 'I';
+        base[2] = 'L';
+        base[3] = 'E';
+        base_len = 4;
     }
 
-    /* Need to grow the directory (except FAT16 root). */
+    for (n = 1; n < 100000UL; n++) {
+        uint8_t tmp[11];
+        uint_fast8_t digits = fat_dec_len_u32(n);
+        uint_fast8_t prefix_len;
+        uint_fast8_t i;
+        int r;
+
+        if (digits + 1U >= 8)
+            break;
+
+        prefix_len = (uint_fast8_t)(8U - (digits + 1U));
+        if (prefix_len > base_len)
+            prefix_len = base_len;
+
+        memset(tmp, ' ', sizeof(tmp));
+        for (i = 0; i < prefix_len; i++)
+            tmp[i] = base[i];
+        tmp[prefix_len++] = '~';
+        fat_put_dec_u32(n, tmp + prefix_len, digits);
+        if (ext_len)
+            memcpy(tmp + 8, ext, ext_len);
+
+        r = fat_dir_sfn_exists(m, dir, tmp);
+        if (r < 0)
+            return -1;
+        if (r == 0) {
+            memcpy(sfn, tmp, 11);
+            return 0;
+        }
+    }
+
+    udata.u_error = ENOSPC;
+    return -1;
+}
+
+static void fat_make_lfn_dirent(uint8_t *e, uint8_t ord, uint8_t checksum,
+                                const uint16_t *name, uint_fast8_t name_len,
+                                uint_fast8_t seq)
+{
+    uint_fast8_t i;
+
+    memset(e, 0, 32);
+    e[0] = ord;
+    e[11] = 0x0F;
+    e[12] = 0;
+    e[13] = checksum;
+    fat_put16(e + 26, 0);
+
+    for (i = 0; i < 13; i++) {
+        uint32_t pos = (uint32_t)(seq - 1U) * 13UL + (uint32_t)i;
+        uint16_t wc;
+
+        if (pos < name_len)
+            wc = name[pos];
+        else if (pos == name_len)
+            wc = 0x0000;
+        else
+            wc = 0xFFFF;
+        fat_lfn_put_word(e, i, wc);
+    }
+}
+
+static int fat_dir_grow(struct mount *m, inoptr dir)
+{
+    uint32_t last;
+    uint32_t newc;
+    uint32_t next;
+    uint32_t limit;
+
+    /* FAT16 root directory is fixed-size. */
     if ((dir->c_fat.flags & FAT_I_ROOT) && m->m_fat.fat_type == 16) {
         udata.u_error = ENOSPC;
         return -1;
     }
 
-    {
-        uint32_t last;
-        uint32_t newc;
-        uint32_t next;
-        uint32_t cluster = dir->c_fat.start_cluster;
-        uint32_t limit = m->m_fat.cluster_count + 2U;
-
-        if (cluster == 0) {
-            udata.u_error = EIO;
-            return -1;
-        }
-
-        last = cluster;
-        while (limit--) {
-            if (fat_get_fat_entry(m, last, &next) != 0)
-                return -1;
-            if (fat_is_eoc(m, next))
-                break;
-            if (fat_is_bad_cluster(m, next) || next == 0 || next > m->m_fat.max_cluster) {
-                udata.u_error = EIO;
-                return -1;
-            }
-            last = next;
-        }
-        if (limit == 0) {
-            udata.u_error = EIO;
-            return -1;
-        }
-
+    /* Empty directory: allocate its first cluster. */
+    if (dir->c_fat.start_cluster == 0) {
         if (fat_alloc_cluster(m, &newc) != 0)
             return -1;
-        if (fat_set_fat_entry(m, last, newc) != 0)
+        dir->c_fat.start_cluster = newc;
+        dir->c_fat.cache_cluster = newc;
+        dir->c_fat.cache_index = 0;
+        dir->c_flags |= CDIRTY;
+        return 0;
+    }
+
+    last = dir->c_fat.start_cluster;
+    limit = m->m_fat.cluster_count + 2U;
+
+    while (limit--) {
+        if (fat_get_fat_entry(m, last, &next) != 0)
+            return -1;
+        if (fat_is_eoc(m, next))
+            break;
+        if (fat_is_bad_cluster(m, next) || next == 0 || next > m->m_fat.max_cluster) {
+            udata.u_error = EIO;
+            return -1;
+        }
+        last = next;
+    }
+
+    if (limit == 0) {
+        udata.u_error = EIO;
+        return -1;
+    }
+
+    if (fat_alloc_cluster(m, &newc) != 0)
+        return -1;
+    if (fat_set_fat_entry(m, last, newc) != 0)
+        return -1;
+
+    return 0;
+}
+
+static int fat_dir_find_free_run(struct mount *m, inoptr dir,
+                                 uint_fast8_t nents, uint32_t *out_raw_off)
+{
+    uint32_t raw_off = 0;
+    uint32_t run_start = 0;
+    uint_fast8_t run_len = 0;
+    uint8_t e[32];
+
+    if (nents == 0) {
+        udata.u_error = EINVAL;
+        return -1;
+    }
+
+    while (1) {
+        int r = fat_dir_read_raw(m, dir, raw_off, e, NULL, NULL);
+        if (r == 1) {
+            if (fat_dir_grow(m, dir) != 0)
+                return -1;
+            continue;
+        }
+        if (r != 0)
             return -1;
 
-        *out_raw_off = raw_off;
-        return 0;
+        if (e[0] == 0xE5 || e[0] == 0x00) {
+            if (run_len == 0)
+                run_start = raw_off;
+            run_len++;
+            if (run_len >= nents) {
+                *out_raw_off = run_start;
+                return 0;
+            }
+        } else {
+            run_len = 0;
+        }
+        raw_off += 32;
     }
 }
 
@@ -1468,6 +1793,11 @@ bool fat_ch_link(inoptr wd, uint8_t *oldname, uint8_t *newname, inoptr nindex)
     /* Insert */
     if (!*oldname) {
         uint8_t sfn[11];
+        uint8_t ntres = 0;
+        uint16_t lfn_name[FILENAME_LEN];
+        uint_fast8_t lfn_len = 0;
+        uint_fast8_t lfn_nents = 0;
+        uint8_t lfn_checksum = 0;
         uint8_t e[32];
         uint32_t raw_off;
         uint32_t sector;
@@ -1475,18 +1805,53 @@ bool fat_ch_link(inoptr wd, uint8_t *oldname, uint8_t *newname, inoptr nindex)
         uint8_t attr;
         uint16_t dd, tt;
         uint32_t start_cluster;
+        uint_fast8_t i;
+        bool is_dot = false;
+        bool is_dotdot = false;
 
         if (!*newname || nindex == NULLINODE) {
             udata.u_error = EINVAL;
             return false;
         }
 
-        if (fat_sfn_from_name(newname, sfn) != 0)
-            return false;
+        is_dot = (newname[0] == '.' && newname[1] == '\0');
+        is_dotdot = (newname[0] == '.' && newname[1] == '.' && newname[2] == '\0');
+
+        if (is_dot || is_dotdot) {
+            memset(sfn, ' ', 11);
+            sfn[0] = '.';
+            if (is_dotdot)
+                sfn[1] = '.';
+        } else {
+            uint8_t tmp_sfn[11];
+            int r;
+
+            if (fat_lfn_from_name(newname, lfn_name, &lfn_len) != 0)
+                return false;
+
+            if (fat_try_make_sfn_exact(newname, sfn, &ntres) == 0) {
+                lfn_nents = 0;
+            } else {
+                lfn_nents = (uint_fast8_t)((lfn_len + 12U) / 13U);
+                if (fat_try_make_sfn_upper(newname, tmp_sfn) == 0) {
+                    r = fat_dir_sfn_exists(m, wd, tmp_sfn);
+                    if (r < 0)
+                        return false;
+                    if (r == 0) {
+                        memcpy(sfn, tmp_sfn, 11);
+                    } else {
+                        if (fat_make_sfn_tilde(m, wd, newname, sfn) != 0)
+                            return false;
+                    }
+                } else {
+                    if (fat_make_sfn_tilde(m, wd, newname, sfn) != 0)
+                        return false;
+                }
+            }
+        }
 
         /* Reject existing entry (case-insensitive). */
-        if (!(newname[0] == '.' && (newname[1] == '\0' ||
-            (newname[1] == '.' && newname[2] == '\0')))) {
+        if (!(is_dot || is_dotdot)) {
             inoptr exist = fat_srch_dir(wd, newname);
             if (exist) {
                 i_deref(exist);
@@ -1495,8 +1860,28 @@ bool fat_ch_link(inoptr wd, uint8_t *oldname, uint8_t *newname, inoptr nindex)
             }
         }
 
-        if (fat_dir_find_free(m, wd, &raw_off) != 0)
+        if (fat_dir_find_free_run(m, wd, (uint_fast8_t)(lfn_nents + 1U), &raw_off) != 0)
             return false;
+
+        if (lfn_nents) {
+            lfn_checksum = fat_sfn_checksum(sfn);
+            for (i = 0; i < lfn_nents; i++) {
+                uint_fast8_t seq = (uint_fast8_t)(lfn_nents - i);
+                uint8_t ord = (uint8_t)seq;
+                if (seq == lfn_nents)
+                    ord |= 0x40;
+
+                fat_make_lfn_dirent(e, ord, lfn_checksum, lfn_name, lfn_len, seq);
+                if (fat_dir_map(m, wd, raw_off + (uint32_t)i * 32UL, &sector, &off) != 0) {
+                    udata.u_error = EIO;
+                    return false;
+                }
+                if (fat_write_dirent(m, sector, off, e) != 0)
+                    return false;
+            }
+            raw_off += (uint32_t)lfn_nents * 32UL;
+        }
+
         if (fat_dir_map(m, wd, raw_off, &sector, &off) != 0) {
             udata.u_error = EIO;
             return false;
@@ -1522,6 +1907,8 @@ bool fat_ch_link(inoptr wd, uint8_t *oldname, uint8_t *newname, inoptr nindex)
         else
             fat_put32(e + 28, (uint32_t)nindex->c_node.i_size);
 
+        e[12] = ntres;
+
         fat_unix_to_dos(tod.low, &dd, &tt);
         fat_put16(e + 14, tt);
         fat_put16(e + 16, dd);
@@ -1533,13 +1920,14 @@ bool fat_ch_link(inoptr wd, uint8_t *oldname, uint8_t *newname, inoptr nindex)
             return false;
 
         /* Update the inode's backpointer only for "real" parent dirents. */
-        if (!(newname[0] == '.' && (newname[1] == '\0' ||
-            (newname[1] == '.' && newname[2] == '\0')))) {
+        if (!(is_dot || is_dotdot)) {
             nindex->c_fat.dirent_sector = sector;
             nindex->c_fat.dirent_offset = off;
             nindex->c_fat.parent_cluster = wd->c_fat.start_cluster;
         }
         nindex->c_fat.attrib = attr;
+
+        setftime(wd, A_TIME | M_TIME | C_TIME);
 
         return true;
     }
