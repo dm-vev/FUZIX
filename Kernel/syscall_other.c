@@ -379,12 +379,19 @@ static int do_umount(uint16_t dev)
 	regptr struct mount *mnt;
 	uint_fast8_t rm = flags & MS_REMOUNT;
 	regptr inoptr ptr;
+#ifdef CONFIG_FATFS
+	bool is_fat = false;
+#endif
 
 	mnt = fs_tab_get(dev);
 	if (mnt == NULL) {
 		udata.u_error = EINVAL;
 		return -1;
 	}
+#ifdef CONFIG_FATFS
+	if (mnt->m_fstype == FSTYPE_FAT)
+		is_fat = true;
+#endif
 
 	/* If anything on this file system is open for write then you
 	   can't remount it read only */
@@ -419,8 +426,12 @@ static int do_umount(uint16_t dev)
 		}
 	}
 
-	if (!rm)
-		mnt->m_fs.s_fmod = FMOD_GO_CLEAN;
+	if (!rm) {
+#ifdef CONFIG_FATFS
+		if (!is_fat)
+#endif
+			mnt->m_fs.s_fmod = FMOD_GO_CLEAN;
+	}
 
 	sync();
 
@@ -429,8 +440,12 @@ static int do_umount(uint16_t dev)
 		mnt->m_flags |= flags & (MS_RDONLY|MS_NOSUID);
 		/* You can choose to remount a corrupt fs r/o in which case
 		   it gets marked clean. We may want to rethink that FIXME */
-		if (mnt->m_flags & MS_RDONLY)
-			mnt->m_fs.s_fmod = FMOD_GO_CLEAN;
+		if (mnt->m_flags & MS_RDONLY) {
+#ifdef CONFIG_FATFS
+			if (!is_fat)
+#endif
+				mnt->m_fs.s_fmod = FMOD_GO_CLEAN;
+		}
 		return 0;
 	}
 
