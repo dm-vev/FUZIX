@@ -1178,6 +1178,9 @@ extern arg_t unlinki(inoptr ino, inoptr pino, uint8_t *fname);
 #ifdef CONFIG_FATFS
 extern int fat_mount(struct mount *m, uint16_t dev, uint16_t flags);
 extern inoptr fat_iroot(struct mount *m);
+extern blkno_t fat_bmap(inoptr ip, blkno_t bn, unsigned int rwflg);
+extern inoptr fat_srch_dir(inoptr wd, uint8_t *compname);
+extern void fat_readi_dir(inoptr ino, uint_fast8_t flag);
 #endif
 
 /* inode.c */
