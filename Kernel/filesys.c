@@ -270,6 +270,22 @@ inoptr i_open(register uint16_t dev, uint16_t ino)
 
     validchk(dev, PANIC_IOPEN);
 
+    m = fs_tab_get(dev);
+    if (m == NULL) {
+        udata.u_error = EINVAL;
+        return NULLINODE;
+    }
+
+#ifdef CONFIG_FATFS
+    if (m->m_fstype == FSTYPE_FAT) {
+        if (ino != ROOTINODE) {
+            udata.u_error = EINVAL;
+            return NULLINODE;
+        }
+        return fat_iroot(m);
+    }
+#endif
+
     if(!ino){        /* ino==0 means we want a new one */
         isnew = true;
         ino = i_alloc(dev);
@@ -278,8 +294,6 @@ inoptr i_open(register uint16_t dev, uint16_t ino)
             return NULLINODE;
         }
     }
-
-    m = fs_tab_get(dev);
 
     /* Maybe make this DEBUG only eventually - the fs_tab_get cost
        is higher than ideal */
@@ -311,6 +325,9 @@ inoptr i_open(register uint16_t dev, uint16_t ino)
     nindex->c_dev = dev;
     nindex->c_num = ino;
     nindex->c_super = m - fs_tab;
+#ifdef CONFIG_FATFS
+    memset(&nindex->c_fat, 0, sizeof(nindex->c_fat));
+#endif
     nindex->c_magic = CMAGIC;
     nindex->c_flags = (m->m_flags & MS_RDONLY) ? CRDONLY : 0;
 found:
@@ -1457,9 +1474,18 @@ struct mount *fmount(uint16_t dev, register inoptr ino, uint16_t flags)
     register struct mount *m;
     register struct filesys *fp;
     register bufptr buf;
+    inoptr ip;
 
     if(d_open(dev, 0) != 0)
         return NULL;    /* Bad device */
+
+    /* Discard any cached blocks/inodes for this device (media change or
+       reused device node across different filesystems). */
+    bdrop(dev);
+    for (ip = i_tab; ip < i_tab + ITABSIZE; ++ip) {
+        if (ip->c_dev == dev && ip->c_refs == 0)
+            ip->c_dev = NO_DEVICE;
+    }
 
     m = newfstab();
     if (m == NULL) {
@@ -1515,8 +1541,12 @@ struct mount *fmount(uint16_t dev, register inoptr ino, uint16_t flags)
             fp->s_tinode = sb.s_tinode;
             fp->s_shift = sb.s_shift;
         } else {
-            udata.u_error = EINVAL;
             brelse(buf);
+#ifdef CONFIG_FATFS
+            if (fat_mount(m, dev, flags) == 0)
+                goto mounted;
+#endif
+            udata.u_error = EINVAL;
             return NULL;
         }
     }
@@ -1538,6 +1568,10 @@ struct mount *fmount(uint16_t dev, register inoptr ino, uint16_t flags)
         return NULL;
     }
 
+#ifdef CONFIG_FATFS
+    m->m_fstype = FSTYPE_FUZIX;
+#endif
+
     if (fp->s_fmod == FMOD_DIRTY) {
         kputs("warning: mounting dirty file system, forcing r/o.\n");
         flags |= MS_RDONLY;
@@ -1547,6 +1581,7 @@ struct mount *fmount(uint16_t dev, register inoptr ino, uint16_t flags)
         fp->s_fmod = FMOD_DIRTY;
     else	/* Clean in memory, don't write it back to media */
         fp->s_fmod = FMOD_CLEAN;
+mounted:
     m->m_mntpt = ino;
     if(ino)
         ++ino->c_refs;
@@ -1554,8 +1589,9 @@ struct mount *fmount(uint16_t dev, register inoptr ino, uint16_t flags)
     /* Makes our entry findable */
     m->m_dev = dev;
 
-    /* Mark the filesystem dirty on disk */
-    sync();
+    /* Mark the filesystem dirty on disk (FUZIX only). */
+    if (fp->s_mounted == SMOUNTED || fp->s_mounted == SMOUNTED_V2)
+        sync();
 
     return m;
 }
