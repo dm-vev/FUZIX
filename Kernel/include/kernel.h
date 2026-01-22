@@ -366,6 +366,21 @@ struct hd_geometry {
 #define major(x) ((x) >> 8)
 #define minor(x) ((x) & 0xFF)
 
+#ifdef CONFIG_FATFS
+/* In-memory FAT inode extension (for FAT16/FAT32). */
+struct fat_inode {
+    uint32_t start_cluster;      /* 0 means "no cluster yet" (empty file) */
+    uint32_t dirent_sector;      /* sector containing the SFN entry */
+    uint16_t dirent_offset;      /* byte offset within sector */
+    uint8_t  attrib;             /* FAT attributes (raw) */
+    uint8_t  flags;              /* internal flags */
+#define FAT_I_ROOT  0x01         /* root directory inode */
+    uint32_t parent_cluster;     /* for ".." */
+    uint32_t cache_cluster;      /* cached cluster for bmap */
+    uint32_t cache_index;        /* corresponding cluster index */
+};
+#endif
+
 /* In memory inode structure */
 typedef struct cinode {
     uint16_t   c_magic;         /* Used to check for corruption. */
@@ -382,6 +397,9 @@ typedef struct cinode {
 #define CFLEX		0x0F	/* locked exclusive */
 #define CFMAX		0x0E	/* highest shared lock count permitted */
    uint8_t     c_super;		/* Superblock index */
+#ifdef CONFIG_FATFS
+    struct fat_inode c_fat;
+#endif
 #ifdef CONFIG_BLOCK_SLEEP
    uint16_t    c_lock;		/* inode lock state */
 #endif
@@ -1156,6 +1174,11 @@ extern struct mount *fs_tab_get(uint16_t dev);
 extern struct mount *fmount(uint16_t dev, inoptr ino, uint16_t flags);
 extern void magic(inoptr ino);
 extern arg_t unlinki(inoptr ino, inoptr pino, uint8_t *fname);
+
+#ifdef CONFIG_FATFS
+extern int fat_mount(struct mount *m, uint16_t dev, uint16_t flags);
+extern inoptr fat_iroot(struct mount *m);
+#endif
 
 /* inode.c */
 extern void readi(inoptr ino, uint_fast8_t flag);

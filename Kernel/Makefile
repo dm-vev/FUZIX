@@ -41,7 +41,7 @@ C2SRCS =  syscall_proc.c process.c mm/malloc.c
 C2SRCS += mm/simple.c mm/bank8k.c mm/bank16k.c mm/bank16k_low.c mm/bank32k.c
 C3SRCS = mm/bankfixed.c mm/bank65c816.c mm/flat.c mm/flat_mem.c mm/buddy.c kmod.c
 C2SRCS += mm/bank8086.c mm/bank16kfc.c mm/banksplit.c mm/flat_small.c
-C4SRCS = filesys.c version.c blk400.c blk512.c
+C4SRCS = filesys.c version.c blk400.c blk512.c fatfs.c
 #
 #	Usually we map sysalls into CODE2 but they can be overlaid
 #	Assume we'll never be doing overlays with level2 or networking
