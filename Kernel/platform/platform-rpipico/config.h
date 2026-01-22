@@ -52,6 +52,8 @@
 #define CONFIG_TRIM
 /* Large filesystem support (FS v2, 32-bit block numbers) */
 #define CONFIG_LARGEFS
+/* FAT16/32 filesystem support (SD cards) */
+#define CONFIG_FATFS
 /* Enable single tasking */
 #define CONFIG_SWAP_ONLY
 #define CONFIG_SPLIT_UDATA

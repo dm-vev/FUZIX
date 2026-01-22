@@ -55,6 +55,10 @@ void fstabinit(void)
 
 	for (mp = fs_tab; mp < fs_tab + NMOUNTS; ++mp) {
 		mp->m_dev = NO_DEVICE;
+#ifdef CONFIG_FATFS
+		mp->m_fstype = FSTYPE_FUZIX;
+		memset(&mp->m_fat, 0, sizeof(mp->m_fat));
+#endif
 	}
 }
 
@@ -449,4 +453,3 @@ void fuzix_main(void)
 	udata.u_ptab->p_time = ticks.full;
 	exec_or_die();
 }
-

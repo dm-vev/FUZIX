@@ -459,12 +459,48 @@ typedef struct oft {
     uint8_t   o_refs;     /* Reference count: depends on # of active children */
 } oft;
 
+#ifdef CONFIG_FATFS
+/*
+ * Minimal FAT filesystem mount state.
+ *
+ * The on-disk FAT boot sector may report other sector sizes, but FUZIX block
+ * I/O assumes BLKSIZE sectors; for SD cards this is 512 bytes.
+ */
+#define FSTYPE_FUZIX 0
+#define FSTYPE_FAT   1
+
+struct fat_mount {
+    uint8_t  fat_type;              /* 16 or 32 */
+    uint16_t bytes_per_sector;      /* must match BLKSIZE */
+    uint8_t  sectors_per_cluster;   /* power-of-two, non-zero */
+    uint16_t reserved_sectors;
+    uint8_t  fat_count;
+    uint32_t total_sectors;
+    uint32_t fat_start;             /* LBA of first FAT (within device) */
+    uint32_t fat_sectors;           /* sectors per FAT */
+    uint32_t root_cluster;          /* FAT32 only */
+    uint32_t root_dir_start;        /* FAT16 only (LBA) */
+    uint32_t root_dir_sectors;      /* FAT16 only */
+    uint32_t data_start;            /* LBA of first data sector */
+    uint32_t cluster_count;
+    uint32_t max_cluster;           /* last valid cluster number */
+    uint32_t alloc_hint;            /* allocator scan hint */
+    uint16_t fsinfo_sector;         /* FAT32 FSInfo sector number (relative) */
+    uint8_t  fsinfo_valid;
+};
+#endif
+
 /* Mount table entries */
 struct mount {
     uint16_t m_dev;
     uint16_t m_flags;
     inoptr   m_mntpt;     /* Mount point */
     struct filesys m_fs;
+#ifdef CONFIG_FATFS
+    uint8_t m_fstype;
+    uint8_t m_pad;
+    struct fat_mount m_fat;
+#endif
 };
 #define MS_RDONLY	1
 #define MS_NOSUID	2
