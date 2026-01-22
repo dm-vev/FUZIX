@@ -1181,6 +1181,10 @@ extern inoptr fat_iroot(struct mount *m);
 extern blkno_t fat_bmap(inoptr ip, blkno_t bn, unsigned int rwflg);
 extern inoptr fat_srch_dir(inoptr wd, uint8_t *compname);
 extern void fat_readi_dir(inoptr ino, uint_fast8_t flag);
+extern inoptr fat_newfile(inoptr pino, uint8_t *name);
+extern bool fat_ch_link(inoptr wd, uint8_t *oldname, uint8_t *newname, inoptr nindex);
+extern int fat_trunc_blocks(inoptr ino, blkno_t nblock);
+extern void fat_wr_inode(inoptr ino);
 #endif
 
 /* inode.c */

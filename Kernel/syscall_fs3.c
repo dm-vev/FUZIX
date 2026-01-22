@@ -473,6 +473,9 @@ arg_t _ftruncate(void)
 	}
 
 	/* Ensure the new size is representable by this filesystem mapping. */
+#ifdef CONFIG_FATFS
+	if (fs_tab[ino->c_super].m_fstype != FSTYPE_FAT)
+#endif
 	{
 		blkno_t maxblocks = 18UL + 256UL + 256UL * 256UL;
 #ifdef CONFIG_LARGEFS

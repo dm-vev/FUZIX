@@ -200,8 +200,13 @@ nodir:
 inoptr srch_dir(register inoptr wd, uint8_t *compname)
 {
 #ifdef CONFIG_FATFS
-    if (fs_tab[wd->c_super].m_fstype == FSTYPE_FAT)
-        return fat_srch_dir(wd, compname);
+    if (fs_tab[wd->c_super].m_fstype == FSTYPE_FAT) {
+        inoptr out;
+        i_lock(wd);
+        out = fat_srch_dir(wd, compname);
+        i_unlock(wd);
+        return out;
+    }
 #endif
 
     register struct direct *d;
@@ -391,6 +396,11 @@ bool ch_link(register inoptr wd, uint8_t *oldname, uint8_t *newname, inoptr nind
 
     i_islocked(wd);
 
+#ifdef CONFIG_FATFS
+    if (fs_tab[wd->c_super].m_fstype == FSTYPE_FAT)
+        return fat_ch_link(wd, oldname, newname, nindex);
+#endif
+
     if (wd->c_flags & CRDONLY) {
         udata.u_error = EROFS;
         return false;
@@ -511,6 +521,11 @@ inoptr newfile(register inoptr pino, uint8_t *name)
         udata.u_error = ENXIO;
         goto nogood;
     }
+
+#ifdef CONFIG_FATFS
+    if (fs_tab[pino->c_super].m_fstype == FSTYPE_FAT)
+        return fat_newfile(pino, name);
+#endif
 
     /* We check getperm before CRDONLY because if you reverse these two
        it breaks gcc 68hc11 3.4 */
@@ -948,6 +963,12 @@ void i_deref(register inoptr ino)
     /* If the inode was modified, we must write it to disk. */
     if(!(ino->c_refs) && (ino->c_flags & CDIRTY))
     {
+#ifdef CONFIG_FATFS
+        if (fs_tab[ino->c_super].m_fstype == FSTYPE_FAT) {
+            wr_inode(ino);
+            return;
+        }
+#endif
         if(!(ino->c_node.i_nlink))
         {
             ino->c_node.i_mode = 0;
@@ -973,6 +994,13 @@ void wr_inode(register inoptr ino)
     blkno_t blkno;
 */
     magic(ino);
+
+#ifdef CONFIG_FATFS
+    if (fs_tab[ino->c_super].m_fstype == FSTYPE_FAT) {
+        fat_wr_inode(ino);
+        return;
+    }
+#endif
 
     if (bwritei(ino))
         corrupt_fs(ino->c_dev);
@@ -1219,6 +1247,11 @@ int f_trunc_blocks(register inoptr ino, blkno_t nblock)
         udata.u_error = EROFS;
         return -1;
     }
+
+#ifdef CONFIG_FATFS
+    if (fs_tab[ino->c_super].m_fstype == FSTYPE_FAT)
+        return fat_trunc_blocks(ino, nblock);
+#endif
     dev = ino->c_dev;
 
     /* Dispatch by filesystem version (v1/v2). */
