@@ -133,6 +133,31 @@ sudo ./mkfs -2 /dev/sdXn 8194 $(blockdev --getsz /dev/sdXn)
 sudo ./fsck -y /dev/sdXn
 ```
 
+### Using FAT16/FAT32 on SD cards
+
+FUZIX can also mount FAT16/FAT32 partitions (rw) with VFAT long file names.
+
+On the host, format a partition as FAT32 (example shown for Linux):
+
+```
+sudo mkfs.fat -F 32 /dev/sdXn
+```
+
+Then inside FUZIX, mount it like any other block filesystem (type is
+auto-detected at mount time):
+
+```
+# mkdir /mnt/sd
+# mount /dev/hdb2 /mnt/sd
+```
+
+Notes:
+
+- FAT12 is not supported.
+- Hard links are not supported on FAT (`link()` returns `EOPNOTSUPP`).
+- Newly-created long names are currently ASCII-only and limited to
+  `FILENAME_LEN` (30) characters per path component.
+
 The first thing you probably want to do is `stty erase '^?'` to make the DELETE
 key in your terminal work properly. (Use the `levee` editor to add it to
 `$HOME/.profile`.)
