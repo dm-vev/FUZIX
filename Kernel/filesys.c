@@ -509,7 +509,7 @@ inoptr newfile(register inoptr pino, uint8_t *name)
     }
 
     i_lock(pino);	/* Lock in tree order */
-    i_lock(ino);
+    i_lock(nindex);
     /* This does not implement BSD style "sticky" groups */
     nindex->c_node.i_uid = udata.u_euid;
     nindex->c_node.i_gid = udata.u_egid;
