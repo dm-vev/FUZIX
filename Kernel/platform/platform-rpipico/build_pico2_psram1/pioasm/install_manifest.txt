@@ -1,0 +1,5 @@
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/pioasm-install/pioasm/pioasm
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/pioasm-install/pioasm/pioasmTargets.cmake
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/pioasm-install/pioasm/pioasmTargets-release.cmake
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/pioasm-install/pioasm/pioasmConfig.cmake
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/pioasm-install/pioasm/pioasmConfigVersion.cmake

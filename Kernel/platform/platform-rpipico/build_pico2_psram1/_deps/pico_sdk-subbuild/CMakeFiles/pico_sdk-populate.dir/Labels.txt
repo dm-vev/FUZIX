@@ -1,0 +1,14 @@
+# Target labels
+ pico_sdk-populate
+# Source files and their labels
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/pico_sdk-subbuild/CMakeFiles/pico_sdk-populate
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/pico_sdk-subbuild/CMakeFiles/pico_sdk-populate.rule
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/pico_sdk-subbuild/CMakeFiles/pico_sdk-populate-complete.rule
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/pico_sdk-subbuild/pico_sdk-populate-prefix/src/pico_sdk-populate-stamp/pico_sdk-populate-build.rule
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/pico_sdk-subbuild/pico_sdk-populate-prefix/src/pico_sdk-populate-stamp/pico_sdk-populate-configure.rule
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/pico_sdk-subbuild/pico_sdk-populate-prefix/src/pico_sdk-populate-stamp/pico_sdk-populate-download.rule
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/pico_sdk-subbuild/pico_sdk-populate-prefix/src/pico_sdk-populate-stamp/pico_sdk-populate-install.rule
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/pico_sdk-subbuild/pico_sdk-populate-prefix/src/pico_sdk-populate-stamp/pico_sdk-populate-mkdir.rule
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/pico_sdk-subbuild/pico_sdk-populate-prefix/src/pico_sdk-populate-stamp/pico_sdk-populate-patch.rule
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/pico_sdk-subbuild/pico_sdk-populate-prefix/src/pico_sdk-populate-stamp/pico_sdk-populate-test.rule
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/pico_sdk-subbuild/pico_sdk-populate-prefix/src/pico_sdk-populate-stamp/pico_sdk-populate-update.rule

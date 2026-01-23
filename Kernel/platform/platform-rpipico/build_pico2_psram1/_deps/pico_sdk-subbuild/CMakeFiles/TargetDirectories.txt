@@ -1,0 +1,3 @@
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/pico_sdk-subbuild/CMakeFiles/pico_sdk-populate.dir
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/pico_sdk-subbuild/CMakeFiles/edit_cache.dir
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/pico_sdk-subbuild/CMakeFiles/rebuild_cache.dir

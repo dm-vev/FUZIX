@@ -1,0 +1,2 @@
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/picotool-build/enc_bootloader/CMakeFiles/edit_cache.dir
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/_deps/picotool-build/enc_bootloader/CMakeFiles/rebuild_cache.dir

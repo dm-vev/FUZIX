@@ -1,0 +1,7 @@
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/pioasm/CMakeFiles/pioasm.dir
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/pioasm/CMakeFiles/edit_cache.dir
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/pioasm/CMakeFiles/rebuild_cache.dir
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/pioasm/CMakeFiles/list_install_components.dir
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/pioasm/CMakeFiles/install.dir
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/pioasm/CMakeFiles/install/local.dir
+/home/tikhon/Документы/FUZIX/Kernel/platform/platform-rpipico/build_pico2_psram1/pioasm/CMakeFiles/install/strip.dir
