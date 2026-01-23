@@ -5,7 +5,7 @@
 static uint8_t i2c_inited = 0;
 static spin_lock_t *i2c_kbd_lock;
 
-#define PICOCALC_KBD_RING_SIZE 64
+#define PICOCALC_KBD_RING_SIZE 256
 #define PICOCALC_KBD_RING_MASK (PICOCALC_KBD_RING_SIZE - 1)
 
 #if (PICOCALC_KBD_RING_SIZE & PICOCALC_KBD_RING_MASK) != 0
@@ -21,11 +21,30 @@ static void kbd_ring_put(uint8_t c)
     uint32_t head = kbd_head;
     uint32_t next = (head + 1) & PICOCALC_KBD_RING_MASK;
     if (next == kbd_tail) {
-        return;
+        /* Drop the oldest byte to keep up with fast typing bursts. */
+        kbd_tail = (kbd_tail + 1) & PICOCALC_KBD_RING_MASK;
     }
     kbd_ring[head] = c;
     __dmb();
     kbd_head = next;
+}
+
+static void kbd_ring_put_seq(const uint8_t *bytes, size_t len)
+{
+    for (size_t i = 0; i < len; i++)
+        kbd_ring_put(bytes[i]);
+}
+
+static void kbd_ring_put_esc_csi(uint8_t final)
+{
+    const uint8_t seq[3] = { 0x1B, '[', final };
+    kbd_ring_put_seq(seq, sizeof(seq));
+}
+
+static void kbd_ring_put_esc_ss3(uint8_t final)
+{
+    const uint8_t seq[3] = { 0x1B, 'O', final };
+    kbd_ring_put_seq(seq, sizeof(seq));
 }
 
 static int kbd_ring_get(void)
@@ -54,6 +73,36 @@ static struct picocalc_poll_config poll_cfg;
 
 static uint8_t status_phase;
 static int ctrlheld;
+
+/*
+ * PicoCalc keyboard sends non-ASCII bytes for special keys. Translate them
+ * into VT100-ish escape sequences so curses and full-screen apps work.
+ *
+ * Keep viewback scrolling available via Ctrl+Up / Ctrl+Down (handled by LCD
+ * TTY driver) instead of eating plain Up/Down.
+ */
+enum {
+    PICOCALC_KEY_F1 = 0xA1,
+    PICOCALC_KEY_F2 = 0xA2,
+    PICOCALC_KEY_F3 = 0xA3,
+    PICOCALC_KEY_F4 = 0xA4,
+    PICOCALC_KEY_F5 = 0xA5,
+    /* Optional if firmware ever reports them. */
+    PICOCALC_KEY_F6 = 0xA6,
+    PICOCALC_KEY_F7 = 0xA7,
+    PICOCALC_KEY_F8 = 0xA8,
+    PICOCALC_KEY_F9 = 0xA9,
+    PICOCALC_KEY_F10 = 0xAA,
+
+    PICOCALC_KEY_UP = 0xB5,
+    PICOCALC_KEY_DOWN = 0xB6,
+    PICOCALC_KEY_LEFT = 0xB7,
+    PICOCALC_KEY_RIGHT = 0xB8,
+
+    /* Internal: consumed by lcd_getc() for viewback scrolling. */
+    PICOCALC_KEY_VIEW_UP = 0x90,
+    PICOCALC_KEY_VIEW_DOWN = 0x91,
+};
 
 static uint32_t now_ms(void)
 {
@@ -104,39 +153,41 @@ void init_i2c_kbd(){
     poll_cfg.status_poll_us = PICOCALC_STATUS_POLL_US;
     poll_cfg.backoff_min_us = PICOCALC_I2C_BACKOFF_MIN_US;
     poll_cfg.backoff_max_us = PICOCALC_I2C_BACKOFF_MAX_US;
-    poll_cfg.fifo_max_per_poll = 4;
+    poll_cfg.fifo_max_per_poll = 16;
     i2c_inited = 1;
 }
 
-static int i2c_kbd_read_fifo(uint16_t *out)
+static int i2c_kbd_read_fifo_locked(uint16_t *out)
 {
     int retval;
     uint8_t reg = 0x09;
     uint8_t resp[2] = {0};
 
-    uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
     i2c_stats.fifo_reads++;
     retval = i2c_write_timeout_us(I2C_KBD_MOD, I2C_KBD_ADDR, &reg, 1, false, I2C_KBD_TIMEOUT_US);
     if (retval != 1) {
         i2c_stats.fifo_errors++;
         i2c_record_error();
-        spin_unlock(i2c_kbd_lock, spin);
         return -1;
     }
     retval = i2c_read_timeout_us(I2C_KBD_MOD, I2C_KBD_ADDR, resp, sizeof(resp), false, I2C_KBD_TIMEOUT_US);
-    spin_unlock(i2c_kbd_lock, spin);
     if (retval != (int)sizeof(resp)) {
-        uint32_t spin2 = spin_lock_blocking(i2c_kbd_lock);
         i2c_stats.fifo_errors++;
         i2c_record_error();
-        spin_unlock(i2c_kbd_lock, spin2);
         return -1;
     }
     *out = (uint16_t)resp[0] | ((uint16_t)resp[1] << 8);
-    uint32_t spin3 = spin_lock_blocking(i2c_kbd_lock);
     i2c_record_ok();
-    spin_unlock(i2c_kbd_lock, spin3);
     return 0;
+}
+
+static int i2c_kbd_read_fifo(uint16_t *out)
+{
+    int rc;
+    uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
+    rc = i2c_kbd_read_fifo_locked(out);
+    spin_unlock(i2c_kbd_lock, spin);
+    return rc;
 }
 
 static int i2c_kbd_read_reg_u8(uint8_t reg, uint8_t *out)
@@ -227,21 +278,23 @@ void picocalc_kbd_poll(void)
         return;
 
     uint32_t max_per = 4;
-    if (i2c_kbd_lock) {
-        uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
-        if (poll_cfg.fifo_max_per_poll)
-            max_per = poll_cfg.fifo_max_per_poll;
-        spin_unlock(i2c_kbd_lock, spin);
-    }
+
+    uint32_t spin = spin_lock_blocking(i2c_kbd_lock);
+    if (poll_cfg.fifo_max_per_poll)
+        max_per = poll_cfg.fifo_max_per_poll;
     if (max_per > 32)
         max_per = 32;
 
     for (uint32_t iter = 0; iter < max_per; iter++) {
         uint16_t buff = 0;
-        if (i2c_kbd_read_fifo(&buff) < 0)
+        if (i2c_kbd_read_fifo_locked(&buff) < 0) {
+            spin_unlock(i2c_kbd_lock, spin);
             return;
-        if (buff == 0)
+        }
+        if (buff == 0) {
+            spin_unlock(i2c_kbd_lock, spin);
             return;
+        }
 
         if (buff == 0xA503) {
             ctrlheld = 0;
@@ -258,11 +311,65 @@ void picocalc_kbd_poll(void)
 
         int c = buff >> 8;
         switch (c) {
-        case 0xA1:
-        case 0xA2:
-        case 0xA3:
-        case 0xA4:
-        case 0xA5:
+        case PICOCALC_KEY_F1:
+            kbd_ring_put_esc_ss3('P');
+            continue;
+        case PICOCALC_KEY_F2:
+            kbd_ring_put_esc_ss3('Q');
+            continue;
+        case PICOCALC_KEY_F3:
+            kbd_ring_put_esc_ss3('R');
+            continue;
+        case PICOCALC_KEY_F4:
+            kbd_ring_put_esc_ss3('S');
+            continue;
+        case PICOCALC_KEY_F5: {
+            const uint8_t seq[] = { 0x1B, '[', '1', '5', '~' };
+            kbd_ring_put_seq(seq, sizeof(seq));
+            continue;
+        }
+        case PICOCALC_KEY_F6: {
+            const uint8_t seq[] = { 0x1B, '[', '1', '7', '~' };
+            kbd_ring_put_seq(seq, sizeof(seq));
+            continue;
+        }
+        case PICOCALC_KEY_F7: {
+            const uint8_t seq[] = { 0x1B, '[', '1', '8', '~' };
+            kbd_ring_put_seq(seq, sizeof(seq));
+            continue;
+        }
+        case PICOCALC_KEY_F8: {
+            const uint8_t seq[] = { 0x1B, '[', '1', '9', '~' };
+            kbd_ring_put_seq(seq, sizeof(seq));
+            continue;
+        }
+        case PICOCALC_KEY_F9: {
+            const uint8_t seq[] = { 0x1B, '[', '2', '0', '~' };
+            kbd_ring_put_seq(seq, sizeof(seq));
+            continue;
+        }
+        case PICOCALC_KEY_F10: {
+            const uint8_t seq[] = { 0x1B, '[', '2', '1', '~' };
+            kbd_ring_put_seq(seq, sizeof(seq));
+            continue;
+        }
+        case PICOCALC_KEY_UP:
+            if (ctrlheld)
+                kbd_ring_put(PICOCALC_KEY_VIEW_UP);
+            else
+                kbd_ring_put_esc_csi('A');
+            continue;
+        case PICOCALC_KEY_DOWN:
+            if (ctrlheld)
+                kbd_ring_put(PICOCALC_KEY_VIEW_DOWN);
+            else
+                kbd_ring_put_esc_csi('B');
+            continue;
+        case PICOCALC_KEY_RIGHT:
+            kbd_ring_put_esc_csi('C');
+            continue;
+        case PICOCALC_KEY_LEFT:
+            kbd_ring_put_esc_csi('D');
             continue;
         default:
             break;
@@ -273,10 +380,16 @@ void picocalc_kbd_poll(void)
         if (c >= 0 && c <= 0xFF)
             kbd_ring_put((uint8_t)c);
     }
+    spin_unlock(i2c_kbd_lock, spin);
 }
 
 int read_i2c_kbd(void)
 {
+    int c = kbd_ring_get();
+    if (c >= 0)
+        return c;
+    /* Opportunistic burst-poll on demand to reduce input latency. */
+    picocalc_kbd_poll();
     return kbd_ring_get();
 }
 

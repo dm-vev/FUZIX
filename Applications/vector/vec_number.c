@@ -225,4 +225,3 @@ char *vec_number_string(vec_number n, int prec, char *buf, size_t bufsz)
 	}
 	return format_float(n.f, prec, buf, bufsz);
 }
-

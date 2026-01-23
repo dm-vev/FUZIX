@@ -18,6 +18,25 @@ extern void *fontdata_6x8;
 static uint8_t vt_buff[VT_BUFSIZE];
 static uint16_t cur_blink_addr = 0;
 static uint16_t vt_offset;
+static uint8_t active_vt;
+static uint8_t visible_vt;
+static uint8_t vt_scroll_lines[MAX_VT];
+
+extern uint8_t inputtty;
+
+static uint8_t map_y(uint8_t y)
+{
+	uint8_t mapped = y + vt_scroll_lines[active_vt];
+	if (mapped >= VT_HEIGHT)
+		mapped -= VT_HEIGHT;
+	return mapped;
+}
+
+static void apply_hw_scroll(uint8_t vt)
+{
+	/* V99xx_REG_VERT_OFFSET is in pixel scanlines; our font is 8px high. */
+	v99xx_write_reg(V99xx_REG_VERT_OFFSET, (uint8_t)(vt_scroll_lines[vt] << 3));
+}
 
 void vdpinit(void)
 {
@@ -35,20 +54,20 @@ void vdpinit(void)
         v99xx_memset_vram(VT_BASE + i * VT_OFFSET, ' ',  VT_HEIGHT * VT_WIDTH);
         v99xx_memset_vram(VT_BASE_BLINK + i * VT_OFFSET, 0,
                 VT_HEIGHT * VT_WIDTH / 8);
+	vt_scroll_lines[i] = 0;
     }
     vt_offset = 0;
+    active_vt = 0;
+    visible_vt = 0;
+    apply_hw_scroll(0);
 }
 
 void clear_lines(int8_t y, int8_t ct)
 {
-    uint16_t addr;
-
     if (ct == 0)
         return;
-
-    addr = VT_BASE + vt_offset + y * VT_WIDTH;
-    v99xx_set_vram_page(addr / V99xx_VRAM_PAGE_SIZE);
-    v99xx_memset_vram(addr, ' ',  ct * VT_WIDTH);
+    while (ct--)
+	clear_across(y++, 0, VT_WIDTH);
 }
 
 void clear_across(int8_t y, int8_t x, int16_t l)
@@ -57,7 +76,7 @@ void clear_across(int8_t y, int8_t x, int16_t l)
 
     if (l == 0)
         return;
-    addr = VT_BASE + vt_offset + y * VT_WIDTH + x;
+    addr = VT_BASE + vt_offset + map_y((uint8_t)y) * VT_WIDTH + x;
     v99xx_set_vram_page(addr / V99xx_VRAM_PAGE_SIZE);
     v99xx_memset_vram(addr, ' ', l);
 }
@@ -72,8 +91,9 @@ void cursor_on(int8_t y, int8_t x)
 {
     uint16_t blink_addr;
     uint8_t bit;
+    uint8_t by = map_y((uint8_t)y);
 
-    blink_addr = VT_BASE_BLINK + vt_offset + y * 10 + (x >> 3);
+    blink_addr = VT_BASE_BLINK + vt_offset + by * (VT_WIDTH / 8) + (x >> 3);
     bit = 7 - (x & 0x7);
     v99xx_set_vram_page(blink_addr / V99xx_VRAM_PAGE_SIZE);
     v99xx_write_vram(blink_addr, 1 << bit);
@@ -96,18 +116,26 @@ void memcpy_vram(uint16_t dst, uint16_t src, uint16_t size)
 
 void scroll_up(void)
 {
-    memcpy_vram(VT_BASE + vt_offset , VT_WIDTH + vt_offset, VT_WIDTH * VT_BOTTOM);
+    if (++vt_scroll_lines[active_vt] == VT_HEIGHT)
+	vt_scroll_lines[active_vt] = 0;
+    if (active_vt == visible_vt)
+	apply_hw_scroll(active_vt);
 }
 
 void scroll_down(void)
 {
-    memcpy_vram(VT_WIDTH + vt_offset , VT_BASE + vt_offset , VT_WIDTH * VT_BOTTOM);
+    if (vt_scroll_lines[active_vt] == 0)
+	vt_scroll_lines[active_vt] = VT_HEIGHT - 1;
+    else
+	vt_scroll_lines[active_vt]--;
+    if (active_vt == visible_vt)
+	apply_hw_scroll(active_vt);
 }
 
 void plot_char(int8_t y, int8_t x, uint16_t c)
 {
     uint16_t addr;
-    addr = VT_BASE + vt_offset + y * VT_WIDTH + x;
+    addr = VT_BASE + vt_offset + map_y((uint8_t)y) * VT_WIDTH + x;
     v99xx_set_vram_page(addr / V99xx_VRAM_PAGE_SIZE);
     v99xx_write_vram(addr, c);
 }
@@ -119,12 +147,15 @@ void vtattr_notify(void)
 void set_active_vt(uint8_t vt)
 {
     vt_offset = vt * VT_OFFSET;
+    active_vt = vt;
 }
 
 void set_visible_vt(uint8_t vt)
 {
     uint8_t val;
     uint16_t offset = vt * VT_OFFSET;
+
+    visible_vt = vt;
 
     val = (uint8_t)(((VT_BASE + offset & 0xF800) >> 10) | 0x03);
     v99xx_write_reg(V99xx_REG_PTRN_LAYOUT_BASE, val);
@@ -134,4 +165,6 @@ void set_visible_vt(uint8_t vt)
 
     val = (uint8_t)(((VT_BASE_BLINK + offset & 0xC000) >> 14) & 0x07);
     v99xx_write_reg(V99xx_REG_COLOR_BASE_L, val);
+
+    apply_hw_scroll(vt);
 }

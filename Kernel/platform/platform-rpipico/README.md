@@ -80,13 +80,13 @@ To build Pico and Pico W image, run: `make TARGET=rpipico SUBTARGET=pico_w
 diskimage` To build Pico 2 and Pico 2 W, run: `make TARGET=rpipico
 SUBTARGET=pico2 diskimage`
 
-Go to `Kernel/platform/platform-rpipico`. You will see `build/fuzix.uf2` and
+Go to `Kernel/platform/platform-rpipico`. You will see `build_<subtarget>_psram<0|1>/fuzix.uf2` and
 `filesystem.uf2`.
 
 ### Installing Kernel
 
 - Push and hold the BOOTSEL button as you plug usb into your computer.
-- Copy `build/fuzix.uf2` onto the storage device. After copying is done, Pico
+- Copy `build_<subtarget>_psram<0|1>/fuzix.uf2` onto the storage device. After copying is done, Pico
   will restart into FUZIX.
 - To update the kernel, repeat the same procedure.
 
@@ -166,8 +166,9 @@ key in your terminal work properly. (Use the `levee` editor to add it to
 
 The Pico Fuzix port runs generic Cortex M0 ELF pie binaries, which are
 theoretically portable to other ARM or Cortex devices, but this hasn't been
-tried yet. There's 64kB available for both code and data; the system call
-interface uses `svc`.
+tried yet. On the original Pico targets the per-process userspace is 64kB for
+both code and data; on Pico 2 builds it is larger (currently 192kB). The system
+call interface uses `svc`.
 
 The Pico's mask ROM contains many useful routines which can be used instead of
 libgcc, which would reduce the binary size. This hasn't been done yet because it

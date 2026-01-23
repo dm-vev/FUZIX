@@ -23,6 +23,12 @@ static uint16_t fb_owner_pid;
 static struct fb_rect fb_dirty;
 static bool fb_dirty_valid;
 
+/*
+ * Kernel stack on small MCUs is tight. Avoid large per-call stack allocations
+ * in the framebuffer driver (a full scanline is 320 * 3 = 960 bytes).
+ */
+static uint8_t fb_linebuf[FB_STRIDE_BYTES];
+
 static const struct display fb_text_mode = {
 	FB_MODE_TEXT,
 	FB_WIDTH, FB_HEIGHT,
@@ -103,7 +109,6 @@ static void fb_mark_dirty(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 
 static void fb_flush_rect(const struct fb_rect *r)
 {
-	uint8_t linebuf[FB_STRIDE_BYTES];
 	uint16_t y;
 	uint16_t w = r->w;
 	uint16_t h = r->h;
@@ -121,8 +126,8 @@ static void fb_flush_rect(const struct fb_rect *r)
 
 	for (y = 0; y < h; y++) {
 		uint32_t off = (uint32_t)(y0 + y) * FB_STRIDE_BYTES + (uint32_t)x * FB_BPP;
-		psram_bus_read(off, linebuf, w * FB_BPP);
-		lcd_draw_rect_bgr(x, y0 + y, w, 1, linebuf);
+		psram_bus_read(off, fb_linebuf, w * FB_BPP);
+		lcd_draw_rect_bgr(x, y0 + y, w, 1, fb_linebuf);
 	}
 }
 
@@ -147,6 +152,17 @@ static int fb_set_mode(uint8_t mode)
 		break;
 	case FB_MODE_DIRECT:
 	case FB_MODE_MEMORY:
+		/*
+		 * Leaving text mode: reset terminal scroll/view state so raw framebuffer
+		 * drawing starts at the top-left of the visible panel (important if the
+		 * user previously scrolled back in the text console).
+		 */
+		lcd_text_reset();
+#ifdef HARDWARE_SCROLL
+		/* Make sure the controller scroll window is reset for graphics. */
+		setScrollArea(0, 0);
+		HWScroll(0);
+#endif
 		lcd_text_enable(false);
 		lcd_clear();
 		break;
@@ -301,7 +317,6 @@ int fb_ioctl(uint_fast8_t minor, uarg_t request, char *ptr)
 	struct display disp;
 	struct fb_rect rect;
 	uint8_t header[8];
-	uint8_t linebuf[FB_STRIDE_BYTES];
 	uint32_t data_offset;
 	uint32_t expected;
 	uint16_t w;
@@ -401,20 +416,22 @@ int fb_ioctl(uint_fast8_t minor, uarg_t request, char *ptr)
 			if (fb_mode == FB_MODE_DIRECT) {
 				for (y = 0; y < h; y++) {
 					uint32_t line_off = data_offset + (uint32_t)y * w * FB_BPP;
-					if (uget(ptr + line_off, linebuf, w * FB_BPP))
+					if (uget(ptr + line_off, fb_linebuf, w * FB_BPP))
 						return -1;
-					lcd_draw_rect_bgr(rect.x, rect.y + y, w, 1, linebuf);
+					lcd_draw_rect_bgr(rect.x, rect.y + y, w, 1, fb_linebuf);
 				}
+				udata.u_error = 0;
 				return 0;
 			}
 			if (fb_mode == FB_MODE_MEMORY) {
 				for (y = 0; y < h; y++) {
 					uint32_t line_off = data_offset + (uint32_t)y * w * FB_BPP;
-					if (uget(ptr + line_off, linebuf, w * FB_BPP))
+					if (uget(ptr + line_off, fb_linebuf, w * FB_BPP))
 						return -1;
-					if (fb_do_rect_write(&(struct fb_rect){rect.x, rect.y + y, w, 1}, linebuf))
+					if (fb_do_rect_write(&(struct fb_rect){rect.x, rect.y + y, w, 1}, fb_linebuf))
 						return -1;
 				}
+				udata.u_error = 0;
 				return 0;
 			}
 			udata.u_error = EINVAL;
@@ -426,9 +443,9 @@ int fb_ioctl(uint_fast8_t minor, uarg_t request, char *ptr)
 		}
 		for (y = 0; y < h; y++) {
 			struct fb_rect line = {rect.x, rect.y + y, w, 1};
-			if (fb_do_rect_read(&line, linebuf))
+			if (fb_do_rect_read(&line, fb_linebuf))
 				return -1;
-			if (uput(linebuf, ptr + data_offset + (uint32_t)y * w * FB_BPP, w * FB_BPP))
+			if (uput(fb_linebuf, ptr + data_offset + (uint32_t)y * w * FB_BPP, w * FB_BPP))
 				return -1;
 		}
 		return 0;

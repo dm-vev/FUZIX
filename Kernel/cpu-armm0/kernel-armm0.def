@@ -1,4 +1,4 @@
-#define UDATA_SIZE_ASM		(512*3)
+#define UDATA_SIZE_ASM		(512*4)
 
 #define U_DATA__U_SP_OFFSET 24
 #define U_DATA__U_PTAB_OFFSET 0
@@ -7,4 +7,3 @@
 #define P_TAB__P_PAGE_OFFSET 24
 
 #define P_RUNNING 1
-

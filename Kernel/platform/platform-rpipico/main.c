@@ -99,7 +99,16 @@ void syscall_handler(struct svc_frame* eh)
 
     unix_syscall();
 
-    udata.u_insys = 1;
+    /*
+     * The ABI for this port returns errno separately in r1.
+     * Ensure "errno" is 0 for successful calls even if an interrupt
+     * (or other kernel code) clobbered udata.u_error while we were in
+     * the syscall path.
+     */
+    if (udata.u_retval != (susize_t)-1)
+        udata.u_error = 0;
+
+    udata.u_insys = 0;
     eh->r0 = udata.u_retval;
     eh->r1 = udata.u_error;
 }

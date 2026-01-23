@@ -16,12 +16,19 @@ struct vec_fb {
 	int fd;
 	int mode;
 	struct display disp;
+	int active;
 
 	uint8_t *buf;
 	size_t cap;
 };
 
+/*
+ * Open /dev/fb and lock it, but do not switch to graphics mode yet.
+ * This lets the caller keep the LCD text console visible while preparing
+ * the first frame and printing startup logs.
+ */
 int vec_fb_open(struct vec_fb *fb, int mode, char *err, size_t errsz);
+int vec_fb_activate(struct vec_fb *fb, char *err, size_t errsz);
 void vec_fb_close(struct vec_fb *fb);
 
 /* Returns a pointer to pixel payload (BGR888), or NULL on error. */
@@ -31,4 +38,3 @@ int vec_fb_write_box(struct vec_fb *fb);
 int vec_fb_flush(struct vec_fb *fb, const struct fb_rect *r);
 
 #endif
-

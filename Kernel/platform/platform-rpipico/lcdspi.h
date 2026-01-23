@@ -15,7 +15,10 @@
 #define Pico_LCD_RST 15
 
 #define ILI9488  1
-#define HARDWARE_SCROLL 1 //use 0x33 0x37 to do vertical scrolling
+/* use 0x33/0x37 to do vertical scrolling */
+#if defined(CONFIG_PICOCALC)
+#define HARDWARE_SCROLL 1
+#endif
 #ifdef ILI9488
 #define LCD_WIDTH 320
 #define LCD_HEIGHT 320

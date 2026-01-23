@@ -113,6 +113,18 @@ static void on_sig(int sig)
 	running = 0;
 }
 
+struct kbd_source {
+	int fd;
+	struct termios saved;
+	int have_saved;
+	int need_close;
+};
+
+static int ui_terminal_can_quit(const struct ui_state *u)
+{
+	return u && u->tab == TAB_TERMINAL && !u->edit_var[0] && !u->show_help && u->input_len == 0;
+}
+
 static void ui_set_message(struct ui_state *u, const char *s)
 {
 	if (!u)
@@ -435,18 +447,18 @@ static void ui_status_text(struct ui_state *u, char *out, size_t outsz, int *cur
 	}
 
 	switch (u->tab) {
-	case TAB_PLOT: {
-		char xmin[16], xmax[16], ymin[16], ymax[16];
-		ui_fmt_axis(u->x_min, xmin, sizeof(xmin));
-		ui_fmt_axis(u->x_max, xmax, sizeof(xmax));
-		ui_fmt_axis(u->y_min, ymin, sizeof(ymin));
-		ui_fmt_axis(u->y_max, ymax, sizeof(ymax));
-		if (u->plot_dim == 3)
-			snprintf(out, outsz, "3D x:[%s..%s] y:[%s..%s] zoom:%0.2f", xmin, xmax, ymin, ymax, u->plot_zoom);
-		else
-			snprintf(out, outsz, "x:[%s..%s] y:[%s..%s]", xmin, xmax, ymin, ymax);
-		break;
-	}
+		case TAB_PLOT: {
+			char xmin[16], xmax[16], ymin[16], ymax[16];
+			ui_fmt_axis(u->x_min, xmin, sizeof(xmin));
+			ui_fmt_axis(u->x_max, xmax, sizeof(xmax));
+			ui_fmt_axis(u->y_min, ymin, sizeof(ymin));
+			ui_fmt_axis(u->y_max, ymax, sizeof(ymax));
+			if (u->plot_dim == 3)
+				snprintf(out, outsz, "3D x:[%s..%s] y:[%s..%s] zoom:%0.2f", xmin, xmax, ymin, ymax, u->plot_zoom);
+			else
+				snprintf(out, outsz, "x:[%s..%s] y:[%s..%s]", xmin, xmax, ymin, ymax);
+			break;
+		}
 	case TAB_STACK:
 		snprintf(out, outsz, "stack: Up/Down select | Enter edit | F1 term | F2 plot");
 		break;
@@ -1600,7 +1612,13 @@ static int open_kbd(struct ui_state *u, const char *path)
 {
 	if (!u || !path)
 		return -1;
-	int fd = open(path, O_RDWR | O_NOCTTY);
+
+	int fd = -1;
+	if (!strcmp(path, "-")) {
+		fd = 0;
+	} else {
+		fd = open(path, O_RDWR | O_NOCTTY);
+	}
 	if (fd < 0)
 		return -1;
 	if (tcgetattr(fd, &u->kbd_saved) == 0) {
@@ -1613,12 +1631,100 @@ static int open_kbd(struct ui_state *u, const char *path)
 	return fd;
 }
 
+static int kbd_setup_fd(struct kbd_source *ks, int fd, int need_close)
+{
+	if (!ks || fd < 0)
+		return -1;
+	memset(ks, 0, sizeof(*ks));
+	ks->fd = fd;
+	ks->need_close = need_close;
+	{
+		int flags = fcntl(fd, F_GETFL);
+		if (flags >= 0)
+			(void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+	}
+	if (tcgetattr(fd, &ks->saved) == 0) {
+		struct termios t = ks->saved;
+		cfmakeraw(&t);
+		t.c_cc[VMIN] = 0;
+		t.c_cc[VTIME] = 1;
+		(void)tcsetattr(fd, TCSANOW, &t);
+		ks->have_saved = 1;
+	}
+	return 0;
+}
+
+static int kbd_open_auto(struct kbd_source *out, size_t out_cap, const char *preferred)
+{
+	if (!out || out_cap == 0)
+		return -1;
+	size_t n = 0;
+
+	/* 1) Preferred path (usually ttyname(0)) */
+	if (preferred && *preferred) {
+		int fd = open(preferred, O_RDONLY | O_NOCTTY | O_NONBLOCK);
+		if (fd >= 0 && n < out_cap) {
+			if (kbd_setup_fd(&out[n], fd, 1) == 0)
+				n++;
+			else
+				close(fd);
+		}
+	}
+
+	/* 2) Common console ttys */
+	for (int i = 1; i <= 8 && n < out_cap; i++) {
+		char path[16];
+		snprintf(path, sizeof(path), "/dev/tty%d", i);
+		int fd = open(path, O_RDONLY | O_NOCTTY | O_NONBLOCK);
+		if (fd < 0)
+			continue;
+		if (kbd_setup_fd(&out[n], fd, 1) == 0)
+			n++;
+		else
+			close(fd);
+	}
+
+	/* 3) Fallback controlling tty (may be a mux) */
+	if (n < out_cap) {
+		int fd = open("/dev/tty", O_RDONLY | O_NOCTTY | O_NONBLOCK);
+		if (fd >= 0) {
+			if (kbd_setup_fd(&out[n], fd, 1) == 0)
+				n++;
+			else
+				close(fd);
+		}
+	}
+
+	/* 4) Always include stdin as a last resort */
+	if (n < out_cap) {
+		(void)kbd_setup_fd(&out[n], 0, 0);
+		n++;
+	}
+
+	return (int)n;
+}
+
 static void restore_kbd(struct ui_state *u)
 {
 	if (!u)
 		return;
 	if (u->kbdfd >= 0)
 		tcsetattr(u->kbdfd, TCSANOW, &u->kbd_saved);
+}
+
+static void kbd_restore_all(struct kbd_source *ks, size_t n)
+{
+	if (!ks)
+		return;
+	for (size_t i = 0; i < n; i++) {
+		if (ks[i].fd < 0)
+			continue;
+		if (ks[i].have_saved)
+			(void)tcsetattr(ks[i].fd, TCSANOW, &ks[i].saved);
+		if (ks[i].need_close)
+			close(ks[i].fd);
+		ks[i].fd = -1;
+	}
 }
 
 static void ui_render_help(struct ui_state *u);
@@ -1812,14 +1918,14 @@ static void ui_render_help(struct ui_state *u)
 	struct vec_color fg = {0xEE, 0xEE, 0xEE};
 	struct vec_color panel_bg = {0x08, 0x08, 0x08};
 
-	static const char *help[] = {
-		"Vector (Spark) port - keys",
-		"",
-		"F1  terminal",
-		"F2  plot",
-		"F3  vars/stack",
-		"Esc quit",
-		"",
+		static const char *help[] = {
+			"Vector (Spark) port - keys",
+			"",
+			"F1 / Ctrl+T  terminal",
+			"F2 / Ctrl+G  plot",
+			"F3 / Ctrl+S  vars/stack",
+			"Esc quit",
+			"",
 		"terminal:",
 		"  Enter   evaluate",
 		"  Ctrl+G  plot tab",
@@ -1913,7 +2019,7 @@ static void ui_switch_tab(struct ui_state *u, enum vec_tab tab)
 		break;
 	case TAB_TERMINAL:
 	default:
-		ui_set_message(u, "Enter eval | Ctrl+G plot | F2 plot | F3 stack | :clear");
+		ui_set_message(u, "Enter eval | q/backspace/del quits (empty) | Ctrl+G/F2 plot | F3 stack | :clear");
 		break;
 	}
 }
@@ -2047,19 +2153,37 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 			ui_set_message(u, u->show_axes_3d ? "3D axes: on" : "3D axes: off");
 		}
 		break;
-	case VEC_KEY_CTRL:
-		if (k.ctrl == 0x07) {
-			ui_switch_tab(u, TAB_PLOT);
+		case VEC_KEY_CTRL:
+			if (k.ctrl == 0x07) {
+				ui_switch_tab(u, TAB_PLOT);
+				break;
+			}
+			if (k.ctrl == 0x14) { /* Ctrl+T */
+				ui_switch_tab(u, TAB_TERMINAL);
+				break;
+			}
+			if (k.ctrl == 0x13) { /* Ctrl+S */
+				ui_switch_tab(u, TAB_STACK);
+				break;
+			}
 			break;
+	case VEC_KEY_BACKSPACE:
+		if (u->tab == TAB_TERMINAL) {
+			if (ui_terminal_can_quit(u)) {
+				running = 0;
+				break;
+			}
+			ui_backspace(u);
 		}
 		break;
-	case VEC_KEY_BACKSPACE:
-		if (u->tab == TAB_TERMINAL)
-			ui_backspace(u);
-		break;
 	case VEC_KEY_DELETE:
-		if (u->tab == TAB_TERMINAL)
+		if (u->tab == TAB_TERMINAL) {
+			if (ui_terminal_can_quit(u)) {
+				running = 0;
+				break;
+			}
 			ui_delete(u);
+		}
 		break;
 	case VEC_KEY_LEFT:
 		if (u->tab == TAB_TERMINAL) {
@@ -2146,9 +2270,11 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 		}
 		break;
 	case VEC_KEY_RUNE:
-		if (u->tab != TAB_TERMINAL && k.r == 'q') {
-			running = 0;
-			break;
+		if (k.r == 'q' || k.r == 'Q') {
+			if (u->tab != TAB_TERMINAL || ui_terminal_can_quit(u)) {
+				running = 0;
+				break;
+			}
 		}
 		if (u->tab == TAB_STACK && (k.r == 'e' || k.r == 'E')) {
 			vec_var *v = ui_stack_var_at(u, u->stack_sel);
@@ -2186,13 +2312,18 @@ static void ui_handle_key(struct ui_state *u, vec_key k)
 static void usage(FILE *out)
 {
 	fprintf(out, "vector (FUZIX) - Spark Vector port (WIP)\n");
-	fprintf(out, "usage: vector [-m|-d] [-t /dev/tty1]\n");
+	fprintf(out, "usage: vector [-m|-d] [-t /dev/ttyX|-] [-v] [-l]\n");
+	fprintf(out, "       -v prints build info and exits\n");
+	fprintf(out, "       -l prints verbose startup logs in text mode\n");
+	fprintf(out, "       default is -d (direct framebuffer)\n");
 }
 
 int main(int argc, char **argv)
 {
-	int fb_mode = FB_MODE_MEMORY;
-	const char *kbd_path = "/dev/tty1";
+	int fb_mode = FB_MODE_DIRECT;
+	const char *kbd_path = NULL;
+	int show_version = 0;
+	int verbose_log = 0;
 
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "-m")) {
@@ -2201,10 +2332,33 @@ int main(int argc, char **argv)
 			fb_mode = FB_MODE_DIRECT;
 		} else if (!strcmp(argv[i], "-t") && i + 1 < argc) {
 			kbd_path = argv[++i];
+		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--version")) {
+			show_version = 1;
+		} else if (!strcmp(argv[i], "-l") || !strcmp(argv[i], "--log")) {
+			verbose_log = 1;
 		} else {
 			usage(stderr);
 			return 1;
 		}
+	}
+
+	if (show_version) {
+#ifndef VEC_BUILD_STR
+#define VEC_BUILD_STR "unknown"
+#endif
+#ifndef VEC_BUILDTIME_STR
+#define VEC_BUILDTIME_STR "unknown"
+#endif
+		printf("vector build %s %s\n", VEC_BUILD_STR, VEC_BUILDTIME_STR);
+		return 0;
+	}
+
+	if (!kbd_path) {
+		const char *t = ttyname(0);
+		if (t && *t)
+			kbd_path = t;
+		else
+			kbd_path = "-";
 	}
 
 	signal(SIGINT, on_sig);
@@ -2229,32 +2383,133 @@ int main(int argc, char **argv)
 	u.show_axes_3d = 0;
 	ui_reset_3d_view(&u);
 
+	if (verbose_log) {
+		fprintf(stderr, "vector: starting (mode=%s)\n",
+			fb_mode == FB_MODE_MEMORY ? "memory" : "direct");
+		fflush(stderr);
+	}
+
 	char fb_err[128];
 	if (vec_fb_open(&u.fb, fb_mode, fb_err, sizeof(fb_err)) != 0) {
 		fprintf(stderr, "%s\n", fb_err);
 		return 1;
 	}
 
-	u.kbdfd = open_kbd(&u, kbd_path);
-	if (u.kbdfd < 0) {
-		fprintf(stderr, "kbd: open %s: %s\n", kbd_path, strerror(errno));
-		vec_fb_close(&u.fb);
-		return 1;
+	if (verbose_log) {
+		fprintf(stderr, "vector: fb opened+locked (text console still active)\n");
+		fprintf(stderr, "vector: fb mode info: %ux%u fmt=%u\n",
+			(unsigned)u.fb.disp.width, (unsigned)u.fb.disp.height, (unsigned)u.fb.disp.format);
+		fflush(stderr);
 	}
 
+	/* Compute geometry early so we can prebuild the first frame. */
 	u.cols = u.fb.disp.width / VEC_FONT_W;
 	u.rows = u.fb.disp.height / VEC_FONT_H;
 	if (u.cols <= 0 || u.rows <= 3) {
 		fprintf(stderr, "fb: unsupported size %ux%u\n",
 			(unsigned)u.fb.disp.width, (unsigned)u.fb.disp.height);
-		restore_kbd(&u);
-		close(u.kbdfd);
 		vec_fb_close(&u.fb);
 		return 1;
+	}
+	if (verbose_log) {
+		fprintf(stderr, "vector: geometry cols=%d rows=%d\n", u.cols, u.rows);
+		fflush(stderr);
+	}
+
+	struct kbd_source kbds[12];
+	memset(kbds, 0, sizeof(kbds));
+	for (size_t i = 0; i < (sizeof(kbds) / sizeof(kbds[0])); i++)
+		kbds[i].fd = -1;
+	int kbd_count = 0;
+
+	if (kbd_path) {
+		if (!strcmp(kbd_path, "-")) {
+			(void)kbd_setup_fd(&kbds[0], 0, 0);
+			kbd_count = 1;
+		} else {
+			int fd = open(kbd_path, O_RDONLY | O_NOCTTY | O_NONBLOCK);
+			if (fd < 0) {
+				fprintf(stderr, "kbd: open %s: %s\n", kbd_path, strerror(errno));
+				vec_fb_close(&u.fb);
+				return 1;
+			}
+			(void)kbd_setup_fd(&kbds[0], fd, 1);
+			kbd_count = 1;
+		}
+	} else {
+		const char *t = ttyname(0);
+		kbd_count = kbd_open_auto(kbds, sizeof(kbds) / sizeof(kbds[0]), t);
+		if (kbd_count <= 0)
+			kbd_count = 0;
+	}
+
+	if (verbose_log) {
+		fprintf(stderr, "vector: kbd sources=%d\n", kbd_count);
+		fflush(stderr);
 	}
 
 	vec_env_init(&u.env);
 	ui_set_message(&u, "ready");
+
+	if (verbose_log) {
+		fprintf(stderr, "vector: env init ok\n");
+		fprintf(stderr, "vector: preparing initial frame\n");
+		fflush(stderr);
+	}
+
+	/* Prebuild an initial terminal frame in text mode to avoid a black screen. */
+	char frame[64][256];
+	if (u.rows > (int)(sizeof(frame) / sizeof(frame[0])))
+		u.rows = (int)(sizeof(frame) / sizeof(frame[0]));
+	for (int r = 0; r < u.rows; r++)
+		frame[r][0] = 0;
+	ui_header_text(&u, frame[0], sizeof(frame[0]));
+	for (int r = 1; r < u.rows - 2; r++) {
+		snprintf(frame[r], sizeof(frame[r]), "%s", "");
+	}
+	{
+		const char *prompt = "> ";
+		snprintf(frame[u.rows - 2], sizeof(frame[u.rows - 2]), "%s", prompt);
+	}
+	{
+		int status_cursor_col = -1;
+		int status_cursor_on = 0;
+		ui_status_text(&u, frame[u.rows - 1], sizeof(frame[u.rows - 1]), &status_cursor_col, &status_cursor_on);
+	}
+
+	if (verbose_log) {
+		fprintf(stderr, "vector: switching to graphics mode\n");
+		fflush(stderr);
+	}
+	if (vec_fb_activate(&u.fb, fb_err, sizeof(fb_err)) != 0) {
+		fprintf(stderr, "%s\n", fb_err);
+		kbd_restore_all(kbds, (size_t)kbd_count);
+		vec_env_destroy(&u.env);
+		vec_fb_close(&u.fb);
+		return 1;
+	}
+
+	/* Draw the prebuilt frame immediately after switching modes. */
+	{
+		struct vec_color fg = {0xEE, 0xEE, 0xEE};
+		struct vec_color header_bg = {0x22, 0x22, 0x22};
+		struct vec_color panel_bg = {0x08, 0x08, 0x08};
+		struct vec_color input_bg = {0x00, 0x00, 0x00};
+		struct vec_color status_bg = {0x22, 0x22, 0x22};
+
+		(void)vec_draw_text_row(&u.fb, 0, frame[0], fg, header_bg, -1, 0);
+		for (int r = 1; r < u.rows - 2; r++)
+			(void)vec_draw_text_row(&u.fb, r, frame[r], fg, panel_bg, -1, 0);
+		(void)vec_draw_text_row(&u.fb, u.rows - 2, frame[u.rows - 2], fg, input_bg, 2, 1);
+		(void)vec_draw_text_row(&u.fb, u.rows - 1, frame[u.rows - 1], fg, status_bg, -1, 0);
+		if (u.fb.mode == FB_MODE_MEMORY)
+			(void)vec_fb_flush(&u.fb, NULL);
+	}
+
+	if (verbose_log) {
+		fprintf(stderr, "vector: first frame drawn\n");
+		fflush(stderr);
+	}
 
 	ui_render(&u);
 
@@ -2263,12 +2518,16 @@ int main(int argc, char **argv)
 
 	while (running) {
 		uint8_t tmp[32];
-		ssize_t n = read(u.kbdfd, tmp, sizeof(tmp));
-		if (n > 0) {
-			if (inlen + (size_t)n > sizeof(inbuf))
-				inlen = 0;
-			memcpy(inbuf + inlen, tmp, (size_t)n);
-			inlen += (size_t)n;
+		for (int i = 0; i < kbd_count; i++) {
+			if (kbds[i].fd < 0)
+				continue;
+			ssize_t n = read(kbds[i].fd, tmp, sizeof(tmp));
+			if (n > 0) {
+				if (inlen + (size_t)n > sizeof(inbuf))
+					inlen = 0;
+				memcpy(inbuf + inlen, tmp, (size_t)n);
+				inlen += (size_t)n;
+			}
 		}
 
 		for (;;) {
@@ -2285,10 +2544,12 @@ int main(int argc, char **argv)
 			if (!running)
 				break;
 		}
+
+		if (inlen == 0)
+			usleep(10000);
 	}
 
-	restore_kbd(&u);
-	close(u.kbdfd);
+	kbd_restore_all(kbds, (size_t)kbd_count);
 	ui_plots_clear(&u);
 	vec_env_destroy(&u.env);
 	vec_node_destroy(u.graph);

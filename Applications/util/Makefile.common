@@ -109,7 +109,8 @@ SRCS  = \
 	which.c \
 	who.c \
 	write.c \
-	xargs.c
+	xargs.c \
+	fbtest.c
 
 SRCTC = fleamacs.c \
 	less.c \

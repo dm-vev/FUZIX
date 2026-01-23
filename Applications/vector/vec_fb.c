@@ -42,36 +42,60 @@ int vec_fb_open(struct vec_fb *fb, int mode, char *err, size_t errsz)
 	memset(fb, 0, sizeof(*fb));
 	fb->fd = -1;
 	fb->mode = mode;
+	fb->active = 0;
 
 	fb->fd = open("/dev/fb", O_RDWR);
 	if (fb->fd < 0) {
 		snprintf(err, errsz, "fb: open /dev/fb: %s", strerror(errno));
 		return -1;
 	}
-	if (ioctl(fb->fd, FBIOC_LOCK, 0) != 0) {
-		snprintf(err, errsz, "fb: lock: %s", strerror(errno));
+	if (ioctl(fb->fd, FBIOC_LOCK, 0) < 0) {
+		snprintf(err, errsz, "fb: lock: errno=%d %s", errno, strerror(errno));
 		vec_fb_close(fb);
 		return -1;
 	}
 
 	memset(&disp, 0, sizeof(disp));
 	disp.mode = (uint8_t)mode;
-	if (ioctl(fb->fd, GFXIOC_SETMODE, &disp) != 0) {
-		snprintf(err, errsz, "fb: set mode: %s", strerror(errno));
+	/*
+	 * Don't switch modes yet; query the mode info so the caller can compute
+	 * geometry and prepare a first frame while the text console is still
+	 * visible.
+	 */
+	if (ioctl(fb->fd, GFXIOC_GETMODE, &disp) < 0) {
+		snprintf(err, errsz, "fb: getmode: errno=%d %s", errno, strerror(errno));
 		vec_fb_close(fb);
 		return -1;
 	}
+	fb->disp = disp;
 
-	if (ioctl(fb->fd, GFXIOC_GETINFO, &fb->disp) != 0) {
-		snprintf(err, errsz, "fb: getinfo: %s", strerror(errno));
-		vec_fb_close(fb);
-		return -1;
-	}
 	if (fb->disp.format != FMT_BGR888) {
 		snprintf(err, errsz, "fb: unsupported format %u", (unsigned)fb->disp.format);
 		vec_fb_close(fb);
 		return -1;
 	}
+	return 0;
+}
+
+int vec_fb_activate(struct vec_fb *fb, char *err, size_t errsz)
+{
+	if (!fb || fb->fd < 0) {
+		if (err && errsz)
+			snprintf(err, errsz, "fb: bad args");
+		return -1;
+	}
+	if (fb->active)
+		return 0;
+
+	struct display disp;
+	memset(&disp, 0, sizeof(disp));
+	disp.mode = (uint8_t)fb->mode;
+	if (ioctl(fb->fd, GFXIOC_SETMODE, &disp) < 0) {
+		if (err && errsz)
+			snprintf(err, errsz, "fb: set mode: errno=%d %s", errno, strerror(errno));
+		return -1;
+	}
+	fb->active = 1;
 	return 0;
 }
 
@@ -82,9 +106,11 @@ void vec_fb_close(struct vec_fb *fb)
 	if (!fb)
 		return;
 	if (fb->fd >= 0) {
-		memset(&disp, 0, sizeof(disp));
-		disp.mode = FB_MODE_TEXT;
-		(void)ioctl(fb->fd, GFXIOC_SETMODE, &disp);
+		if (fb->active) {
+			memset(&disp, 0, sizeof(disp));
+			disp.mode = FB_MODE_TEXT;
+			(void)ioctl(fb->fd, GFXIOC_SETMODE, &disp);
+		}
 		(void)ioctl(fb->fd, FBIOC_UNLOCK, 0);
 		close(fb->fd);
 		fb->fd = -1;
@@ -97,6 +123,8 @@ void vec_fb_close(struct vec_fb *fb)
 uint8_t *vec_fb_begin_box(struct vec_fb *fb, uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 {
 	if (!fb || fb->fd < 0)
+		return NULL;
+	if (!fb->active)
 		return NULL;
 	if (!w || !h)
 		return NULL;
@@ -117,7 +145,9 @@ int vec_fb_write_box(struct vec_fb *fb)
 {
 	if (!fb || fb->fd < 0 || !fb->buf)
 		return -1;
-	if (ioctl(fb->fd, GFXIOC_WRITE, fb->buf) != 0)
+	if (!fb->active)
+		return -1;
+	if (ioctl(fb->fd, GFXIOC_WRITE, fb->buf) < 0)
 		return -1;
 	return 0;
 }
@@ -127,12 +157,13 @@ int vec_fb_flush(struct vec_fb *fb, const struct fb_rect *r)
 	struct fb_rect rect;
 	if (!fb || fb->fd < 0)
 		return -1;
+	if (!fb->active)
+		return -1;
 	if (r)
 		rect = *r;
 	else
 		memset(&rect, 0, sizeof(rect));
-	if (ioctl(fb->fd, FBIOC_FLUSH, &rect) != 0)
+	if (ioctl(fb->fd, FBIOC_FLUSH, &rect) < 0)
 		return -1;
 	return 0;
 }
-

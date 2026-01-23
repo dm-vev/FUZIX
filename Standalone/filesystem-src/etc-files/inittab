@@ -7,7 +7,7 @@ is:s:respawn:/bin/sh
 # Start up
 rc::bootwait:/etc/rc
 # Terminals
-01:3:respawn:getty /dev/tty1
+01:3:respawn:getty /dev/tty1 115200 picocalc 53 40
 02:3:off:getty /dev/tty2
 03:3:off:getty /dev/tty3
 # Reboot

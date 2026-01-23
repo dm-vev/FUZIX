@@ -45,7 +45,7 @@ void __isr psram_dma_complete_handler() {
 }
 #endif // defined(PSRAM_ASYNC) && defined(PSRAM_ASYNC_SYNCHRONIZE)
 
-psram_spi_inst_t psram_spi_init_clkdiv(PIO pio, int sm, float clkdiv, bool fudge) {
+psram_spi_inst_t psram_spi_init_clkdiv(PIO pio, int sm, uint16_t clkdiv_int, uint8_t clkdiv_frac, bool fudge) {
     psram_spi_inst_t spi;
     spi.pio = pio;
     spi.offset = pio_add_program(spi.pio, fudge ? &spi_psram_fudge_program : &spi_psram_program);
@@ -68,7 +68,7 @@ psram_spi_inst_t psram_spi_init_clkdiv(PIO pio, int sm, float clkdiv, bool fudge
     /* gpio_set_slew_rate(PSRAM_PIN_SCK, GPIO_SLEW_RATE_FAST); */
     /* gpio_set_slew_rate(PSRAM_PIN_MOSI, GPIO_SLEW_RATE_FAST); */
 
-    pio_spi_psram_cs_init(spi.pio, spi.sm, spi.offset, 8 /*n_bits*/, clkdiv, fudge, PSRAM_PIN_CS, PSRAM_PIN_MOSI, PSRAM_PIN_MISO);
+    pio_spi_psram_cs_init(spi.pio, spi.sm, spi.offset, 8 /*n_bits*/, clkdiv_int, clkdiv_frac, fudge, PSRAM_PIN_CS, PSRAM_PIN_MOSI, PSRAM_PIN_MISO);
 
     // Write DMA channel setup
     spi.write_dma_chan = dma_claim_unused_channel(true);
@@ -127,7 +127,7 @@ psram_spi_inst_t psram_spi_init_clkdiv(PIO pio, int sm, float clkdiv, bool fudge
 };
 
 psram_spi_inst_t psram_spi_init(PIO pio, int sm) {
-    return psram_spi_init_clkdiv(pio, sm, 1.0, true);
+    return psram_spi_init_clkdiv(pio, sm, 1, 0, true);
 }
 
 void psram_spi_uninit(psram_spi_inst_t spi, bool fudge) {
@@ -184,8 +184,8 @@ int test_psram(psram_spi_inst_t* psram_spi, int increment) {
         }
     }
     uint32_t psram_elapsed = time_us_32() - psram_begin;
-    float psram_speed = 1000000.0 * 1024.0 * 1024 / psram_elapsed / increment;
-    printf("8 bit: PSRAM read in %d us, %d B/s (target 705600 B/s)\n", psram_elapsed, (uint32_t)psram_speed);
+    uint32_t psram_speed = (1000000u * 1024u * 1024u) / (psram_elapsed ? psram_elapsed : 1u) / (uint32_t)increment;
+    printf("8 bit: PSRAM read in %d us, %lu B/s (target 705600 B/s)\n", psram_elapsed, (unsigned long)psram_speed);
 
     psram_begin = time_us_32();
     for (uint32_t addr = 0; addr < (1024 * 1024); addr += (2 * increment)) {
@@ -200,8 +200,8 @@ int test_psram(psram_spi_inst_t* psram_spi, int increment) {
         }
     }
     psram_elapsed = (time_us_32() - psram_begin);
-    psram_speed = 1000000.0 * 1024 * 1024 / psram_elapsed / increment;
-    printf("16 bit: PSRAM read in %d us, %d B/s (target 1411200 B/s)\n", psram_elapsed, (uint32_t)psram_speed);
+    psram_speed = (1000000u * 1024u * 1024u) / (psram_elapsed ? psram_elapsed : 1u) / (uint32_t)increment;
+    printf("16 bit: PSRAM read in %d us, %lu B/s (target 1411200 B/s)\n", psram_elapsed, (unsigned long)psram_speed);
 
     psram_begin = time_us_32();
     for (uint32_t addr = 0; addr < (1024 * 1024); addr += (4 * increment)) {
@@ -218,7 +218,7 @@ int test_psram(psram_spi_inst_t* psram_spi, int increment) {
         }
     }
     psram_elapsed = (time_us_32() - psram_begin);
-    psram_speed = 1000000.0 * 1024 * 1024 / psram_elapsed / increment;
-    printf("32 bit: PSRAM read in %d us, %d B/s (target 1411200 B/s)\n", psram_elapsed, (uint32_t)psram_speed);
+    psram_speed = (1000000u * 1024u * 1024u) / (psram_elapsed ? psram_elapsed : 1u) / (uint32_t)increment;
+    printf("32 bit: PSRAM read in %d us, %lu B/s (target 1411200 B/s)\n", psram_elapsed, (unsigned long)psram_speed);
     return 0;
 }

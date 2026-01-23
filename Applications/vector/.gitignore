@@ -1,4 +1,5 @@
 vector
+vector-cli
 *.o
 *.bin
 *.data

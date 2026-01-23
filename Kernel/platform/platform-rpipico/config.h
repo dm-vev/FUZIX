@@ -126,7 +126,7 @@
 
 /* Program layout */
 
-#define UDATA_BLKS  3
+#define UDATA_BLKS  4
 #define UDATA_SIZE  (UDATA_BLKS << BLKSHIFT)
 
 #if TOTALMEM == 0
@@ -149,7 +149,11 @@
  */
 #ifndef PROG_MAX
 #if TOTALMEM >= 256
-#define PROG_MAX 131072
+/*
+ * pico2 has enough RAM to support larger user processes. This helps with
+ * bigger applications like `vector`, which can exceed 128kB once linked.
+ */
+#define PROG_MAX 196608
 #else
 #define PROG_MAX 65536
 #endif

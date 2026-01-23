@@ -3,15 +3,19 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -40,6 +44,7 @@ enum keycode {
 	K_PGUP,
 	K_PGDN,
 	K_F1,
+	K_F2,
 	K_F3,
 	K_F4,
 	K_F5,
@@ -56,7 +61,8 @@ enum sort_mode {
 };
 
 struct entry {
-	char *name;
+	/* Offset into panel->names string pool (NUL-terminated). */
+	uint16_t name_off;
 	mode_t mode;
 	off_t size;
 	time_t mtime;
@@ -72,6 +78,11 @@ struct panel {
 	size_t top;
 	bool show_hidden;
 	enum sort_mode sort;
+	char *names;
+	uint16_t names_len;
+	uint16_t names_cap;
+	struct entry *entries_buf;
+	char *names_buf;
 };
 
 static struct panel panels[2];
@@ -91,34 +102,49 @@ static void status_set(const char *fmt, ...)
 
 static void entry_free(struct entry *e)
 {
-	free(e->name);
-	e->name = NULL;
+	(void)e;
 }
 
 static void panel_clear(struct panel *p)
 {
 	for (size_t i = 0; i < p->count; i++)
 		entry_free(&p->entries[i]);
-	free(p->entries);
-	p->entries = NULL;
+	p->names_len = 0;
 	p->count = 0;
-	p->cap = 0;
 	p->selected = 0;
 	p->top = 0;
 }
 
-static int ensure_cap(struct panel *p, size_t need)
+static const char *entry_name(const struct panel *p, const struct entry *e)
 {
-	if (need <= p->cap)
-		return 0;
-	size_t ncap = p->cap ? p->cap * 2 : 64;
-	while (ncap < need)
-		ncap *= 2;
-	struct entry *ne = realloc(p->entries, ncap * sizeof(*ne));
-	if (!ne)
+	if (!p || !e || !p->names)
+		return "?";
+	if (e->name_off >= p->names_len)
+		return "?";
+	return p->names + e->name_off;
+}
+
+static int names_ensure(struct panel *p, size_t need)
+{
+	if (need > UINT16_MAX)
 		return -1;
-	p->entries = ne;
-	p->cap = ncap;
+	if (need <= p->names_cap)
+		return 0;
+	return -1;
+}
+
+static int names_append(struct panel *p, const char *s, uint16_t *off_out)
+{
+	if (!p || !s || !off_out)
+		return -1;
+	size_t slen = strlen(s) + 1; /* include NUL */
+	size_t need = (size_t)p->names_len + slen;
+	if (names_ensure(p, need) < 0)
+		return -1;
+	uint16_t off = p->names_len;
+	memcpy(p->names + off, s, slen);
+	p->names_len = (uint16_t)need;
+	*off_out = off;
 	return 0;
 }
 
@@ -180,13 +206,15 @@ static int stat_path(const char *path, struct stat *st)
 	return -1;
 }
 
+static const struct panel *sort_panel;
+
 static int entry_cmp_name(const void *aa, const void *bb)
 {
 	const struct entry *a = aa;
 	const struct entry *b = bb;
 	if (a->is_dir != b->is_dir)
 		return a->is_dir ? -1 : 1;
-	return strcasecmp(a->name, b->name);
+	return strcasecmp(entry_name(sort_panel, a), entry_name(sort_panel, b));
 }
 
 static int entry_cmp_mtime(const void *aa, const void *bb)
@@ -196,7 +224,7 @@ static int entry_cmp_mtime(const void *aa, const void *bb)
 	if (a->is_dir != b->is_dir)
 		return a->is_dir ? -1 : 1;
 	if (a->mtime == b->mtime)
-		return strcasecmp(a->name, b->name);
+		return strcasecmp(entry_name(sort_panel, a), entry_name(sort_panel, b));
 	return (a->mtime > b->mtime) ? -1 : 1;
 }
 
@@ -207,7 +235,7 @@ static int entry_cmp_size(const void *aa, const void *bb)
 	if (a->is_dir != b->is_dir)
 		return a->is_dir ? -1 : 1;
 	if (a->size == b->size)
-		return strcasecmp(a->name, b->name);
+		return strcasecmp(entry_name(sort_panel, a), entry_name(sort_panel, b));
 	return (a->size > b->size) ? -1 : 1;
 }
 
@@ -222,12 +250,15 @@ static void panel_sort(struct panel *p)
 		cmp = entry_cmp_size;
 		break;
 	case SORT_NAME:
-	default:
-		cmp = entry_cmp_name;
-		break;
+		default:
+			cmp = entry_cmp_name;
+			break;
 	}
-	if (p->count)
+	if (p->count) {
+		sort_panel = p;
 		qsort(p->entries, p->count, sizeof(p->entries[0]), cmp);
+		sort_panel = NULL;
+	}
 }
 
 static int panel_load(struct panel *p)
@@ -241,15 +272,15 @@ static int panel_load(struct panel *p)
 	panel_clear(p);
 
 	struct dirent *de;
+	int rc = 0;
 	while ((de = readdir(d)) != NULL) {
 		const char *name = de->d_name;
 		if (!p->show_hidden && name[0] == '.' && strcmp(name, "..") && strcmp(name, "."))
 			continue;
 
-		if (ensure_cap(p, p->count + 1) < 0) {
-			closedir(d);
-			status_set("out of memory");
-			return -1;
+		if (p->count + 1 > p->cap) {
+			status_set("too many files (max %u)", (unsigned)p->cap);
+			break;
 		}
 
 		char full[PATH_MAX];
@@ -260,14 +291,13 @@ static int panel_load(struct panel *p)
 		memset(&st, 0, sizeof(st));
 		(void)stat_path(full, &st);
 
-		struct entry *e = &p->entries[p->count++];
+		struct entry *e = &p->entries[p->count];
 		memset(e, 0, sizeof(*e));
-		e->name = strdup(name);
-		if (!e->name) {
-			closedir(d);
-			status_set("out of memory");
-			return -1;
+		if (names_append(p, name, &e->name_off) < 0) {
+			status_set("too many names (max %u bytes)", (unsigned)p->names_cap);
+			break;
 		}
+		p->count++;
 		e->mode = st.st_mode;
 		e->size = st.st_size;
 		e->mtime = st.st_mtime;
@@ -280,7 +310,7 @@ static int panel_load(struct panel *p)
 		p->selected = p->count ? p->count - 1 : 0;
 	if (p->top > p->selected)
 		p->top = p->selected;
-	return 0;
+	return rc;
 }
 
 static void addnstr_compat(const char *s, int n)
@@ -367,12 +397,14 @@ static void draw_panel(const struct panel *p, int y, int x, int h, int w, bool a
 		format_size(sz, sizeof(sz), e);
 		format_mtime(mt, sizeof(mt), e);
 
-		if (sel) {
+		if (e->is_dir)
+			attron(A_BOLD);
+		if (sel)
 			attron(A_REVERSE);
-		}
 
 		char namebuf[PATH_MAX];
-		snprintf(namebuf, sizeof(namebuf), "%s%s", e->name, e->is_dir ? "/" : "");
+		const char *ename = entry_name(p, e);
+		snprintf(namebuf, sizeof(namebuf), "%s%s", ename, e->is_dir ? "/" : "");
 
 		if ((int)strlen(namebuf) > name_w) {
 			namebuf[name_w - 1] = '~';
@@ -381,9 +413,10 @@ static void draw_panel(const struct panel *p, int y, int x, int h, int w, bool a
 
 		mvprintw(list_y + i, x + 1, "%-*s %7s %11s", name_w, namebuf, sz, mt);
 
-		if (sel) {
+		if (sel)
 			attroff(A_REVERSE);
-		}
+		if (e->is_dir)
+			attroff(A_BOLD);
 	}
 }
 
@@ -677,7 +710,7 @@ static int cur_entry_path(char *out, size_t outsz)
 	const struct entry *e = cur_entry();
 	if (!e)
 		return -1;
-	return path_join(out, outsz, cur_panel()->cwd, e->name);
+	return path_join(out, outsz, cur_panel()->cwd, entry_name(cur_panel(), e));
 }
 
 static void clamp_visible(struct panel *p, int list_h)
@@ -699,12 +732,13 @@ static void do_chdir_entry(void)
 	if (!e)
 		return;
 
-	if (!strcmp(e->name, ".")) {
+	const char *ename = entry_name(p, e);
+	if (!strcmp(ename, ".")) {
 		return;
 	}
 
 	char nwd[PATH_MAX];
-	if (!strcmp(e->name, "..")) {
+	if (!strcmp(ename, "..")) {
 		snprintf(nwd, sizeof(nwd), "%s", p->cwd);
 		char *slash = strrchr(nwd, '/');
 		if (slash && slash != nwd)
@@ -713,16 +747,16 @@ static void do_chdir_entry(void)
 			nwd[0] = '/';
 			nwd[1] = 0;
 		}
-	} else {
-		if (!e->is_dir) {
-			char full[PATH_MAX];
-			if (cur_entry_path(full, sizeof(full)) == 0)
-				(void)view_file(full);
-			return;
+		} else {
+			if (!e->is_dir) {
+				char full[PATH_MAX];
+				if (cur_entry_path(full, sizeof(full)) == 0)
+					(void)view_file(full);
+				return;
+			}
+			if (path_join(nwd, sizeof(nwd), p->cwd, ename) < 0)
+				return;
 		}
-		if (path_join(nwd, sizeof(nwd), p->cwd, e->name) < 0)
-			return;
-	}
 	snprintf(p->cwd, sizeof(p->cwd), "%s", nwd);
 	(void)panel_load(p);
 }
@@ -822,11 +856,12 @@ static void do_delete(void)
 	const struct entry *e = cur_entry();
 	if (!e)
 		return;
-	if (!strcmp(e->name, ".") || !strcmp(e->name, ".."))
+	const char *ename = entry_name(cur_panel(), e);
+	if (!strcmp(ename, ".") || !strcmp(ename, ".."))
 		return;
 
 	char msg[96];
-	snprintf(msg, sizeof(msg), "Delete %s?", e->name);
+	snprintf(msg, sizeof(msg), "Delete %s?", ename);
 	if (!confirm_box(msg))
 		return;
 
@@ -859,7 +894,12 @@ static void draw_ui(void)
 	int left_w = w;
 	int right_w = cols - w;
 
+	attron(A_REVERSE);
+	move(0, 0);
+	for (int i = 0; i < cols; i++)
+		addch(' ');
 	mvprintw(0, 0, "mc (FUZIX)  Tab switch  F10 quit  ':' shell");
+	attroff(A_REVERSE);
 
 	draw_panel(&panels[0], 1, left_x, panel_h, left_w, active_panel == 0);
 	draw_panel(&panels[1], 1, right_x, panel_h, right_w, active_panel == 1);
@@ -871,11 +911,13 @@ static void draw_ui(void)
 	mvprintw(status_y, 0, "F1 Help  F3 View  F4 Edit  F5 Copy  F6 Move  F7 Mkdir  F8 Del  F10 Quit");
 
 	move(status_y + 1, 0);
+	attron(A_REVERSE);
 	for (int i = 0; i < cols; i++)
 		addch(' ');
 	if (status_msg[0]) {
 		mvprintw(status_y + 1, 0, "%s", status_msg);
 	}
+	attroff(A_REVERSE);
 
 	refresh();
 }
@@ -883,6 +925,44 @@ static void draw_ui(void)
 static int read_key(void)
 {
 	int ch = getch();
+
+	/* If curses decoded special keys, map them to our internal codes. */
+#ifdef KEY_UP
+	if (ch == KEY_UP) return K_UP;
+#endif
+#ifdef KEY_DOWN
+	if (ch == KEY_DOWN) return K_DOWN;
+#endif
+#ifdef KEY_LEFT
+	if (ch == KEY_LEFT) return K_LEFT;
+#endif
+#ifdef KEY_RIGHT
+	if (ch == KEY_RIGHT) return K_RIGHT;
+#endif
+#ifdef KEY_PPAGE
+	if (ch == KEY_PPAGE) return K_PGUP;
+#endif
+#ifdef KEY_NPAGE
+	if (ch == KEY_NPAGE) return K_PGDN;
+#endif
+#ifdef KEY_F
+	if (ch >= KEY_F(1) && ch <= KEY_F(10)) {
+		int n = ch - KEY_F(1) + 1;
+		switch (n) {
+		case 1: return K_F1;
+		case 2: return K_F2;
+		case 3: return K_F3;
+		case 4: return K_F4;
+		case 5: return K_F5;
+		case 6: return K_F6;
+		case 7: return K_F7;
+		case 8: return K_F8;
+		case 10: return K_F10;
+		default: return K_NONE;
+		}
+	}
+#endif
+
 	if (ch != KEY_ESC)
 		return ch;
 
@@ -900,6 +980,7 @@ static int read_key(void)
 	if (c1 == 'O') {
 		switch (c2) {
 		case 'P': return K_F1;
+		case 'Q': return K_F2;
 		case 'R': return K_F3;
 		case 'S': return K_F4;
 		default:  return K_ESC;
@@ -935,6 +1016,7 @@ static int read_key(void)
 					case 5: return K_PGUP;
 					case 6: return K_PGDN;
 					case 11: return K_F1;
+					case 12: return K_F2;
 					case 13: return K_F3;
 					case 14: return K_F4;
 					case 15: return K_F5;
@@ -967,7 +1049,7 @@ static void do_help(void)
 	mvprintw(3, 0, "Enter: open dir / view file");
 	mvprintw(4, 0, "Backspace: parent dir");
 	mvprintw(5, 0, "Tab: switch panel");
-	mvprintw(6, 0, "F3: view (less)   F4: edit (vi)");
+	mvprintw(6, 0, "F2: show hidden   F3: view (less)   F4: edit (vi)");
 	mvprintw(7, 0, "F5: copy          F6: move/rename");
 	mvprintw(8, 0, "F7: mkdir         F8: delete");
 	mvprintw(9, 0, "':' : shell");
@@ -993,6 +1075,12 @@ static void handle_key(int ch)
 	switch (ch) {
 	case '\t':
 		active_panel ^= 1;
+		break;
+	case K_LEFT:
+		active_panel = 0;
+		break;
+	case K_RIGHT:
+		active_panel = 1;
 		break;
 	case K_UP:
 		if (p->selected)
@@ -1044,6 +1132,11 @@ static void handle_key(int ch)
 		break;
 	case K_F1:
 		do_help();
+		break;
+	case K_F2:
+		p->show_hidden = !p->show_hidden;
+		(void)panel_load(p);
+		status_set(p->show_hidden ? "show hidden: on" : "show hidden: off");
 		break;
 	case K_F3:
 		{
@@ -1098,16 +1191,16 @@ static void handle_key(int ch)
 			else if (c == '6') do_move();
 			else if (c == '7') do_mkdir();
 			else if (c == '8') do_delete();
-		} else if (ch >= 32 && ch < 127) {
-			/* quick search */
-			char needle[2] = { (char)ch, 0 };
-			for (size_t i = 0; i < p->count; i++) {
-				if (!strncasecmp(p->entries[i].name, needle, 1)) {
-					p->selected = i;
-					break;
+			} else if (ch >= 32 && ch < 127) {
+				/* quick search */
+				char needle[2] = { (char)ch, 0 };
+				for (size_t i = 0; i < p->count; i++) {
+					if (!strncasecmp(entry_name(p, &p->entries[i]), needle, 1)) {
+						p->selected = i;
+						break;
+					}
 				}
 			}
-		}
 		break;
 	}
 
@@ -1122,6 +1215,57 @@ static void on_term(int sig)
 	want_exit = 1;
 }
 
+static void maybe_clamp_winsize(void)
+{
+	const char *no = getenv("MC_NO_CLAMP_WINSZ");
+	if (no && *no)
+		return;
+
+	const char *term = getenv("TERM");
+	const bool is_picocalc = (term && strcmp(term, "picocalc") == 0);
+
+	struct winsize ws;
+	memset(&ws, 0, sizeof(ws));
+	if (ioctl(0, TIOCGWINSZ, &ws) != 0)
+		return;
+
+	if (!ws.ws_row || !ws.ws_col)
+		return;
+
+	/*
+	 * PicoCalc LCD is fixed-size. Force a sane window size so curses uses
+	 * the full screen even if the tty driver doesn't report it.
+	 */
+	if (is_picocalc && (ws.ws_row != 40 || ws.ws_col != 53)) {
+		struct winsize nws = ws;
+		nws.ws_row = 40;
+		nws.ws_col = 53;
+		(void)ioctl(0, TIOCSWINSZ, &nws);
+		return;
+	}
+
+	struct winsize nws = ws;
+	/*
+	 * Clamp absurd / buggy window sizes to keep curses allocations bounded,
+	 * but don't shrink the PicoCalc LCD which is 53x40.
+	 */
+	unsigned max_rows = 80;
+	unsigned max_cols = 160;
+	if (is_picocalc) {
+		max_rows = 40;
+		max_cols = 53;
+	}
+	if (nws.ws_row > max_rows)
+		nws.ws_row = (unsigned short)max_rows;
+	if (nws.ws_col > max_cols)
+		nws.ws_col = (unsigned short)max_cols;
+
+	if (nws.ws_row == ws.ws_row && nws.ws_col == ws.ws_col)
+		return;
+
+	(void)ioctl(0, TIOCSWINSZ, &nws);
+}
+
 int main(int argc, char **argv)
 {
 	(void)argc;
@@ -1130,15 +1274,34 @@ int main(int argc, char **argv)
 	signal(SIGTERM, on_term);
 	signal(SIGINT, on_term);
 
+	/*
+	 * Keep static working sets small: on tiny systems curses may fail to
+	 * allocate its screen buffers if the process image is too large.
+	 */
+	enum { MC_MAX_ENTRIES = 48, MC_NAMES_CAP = 1024 };
+	static struct entry entries0[MC_MAX_ENTRIES];
+	static struct entry entries1[MC_MAX_ENTRIES];
+	static char names0[MC_NAMES_CAP];
+	static char names1[MC_NAMES_CAP];
+
 	for (int i = 0; i < 2; i++) {
-		panels[i].entries = NULL;
 		panels[i].count = 0;
-		panels[i].cap = 0;
+		panels[i].cap = MC_MAX_ENTRIES;
+		panels[i].names_len = 0;
+		panels[i].names_cap = MC_NAMES_CAP;
 		panels[i].selected = 0;
 		panels[i].top = 0;
 		panels[i].show_hidden = FALSE;
 		panels[i].sort = SORT_NAME;
 	}
+	panels[0].entries = entries0;
+	panels[0].entries_buf = entries0;
+	panels[0].names = names0;
+	panels[0].names_buf = names0;
+	panels[1].entries = entries1;
+	panels[1].entries_buf = entries1;
+	panels[1].names = names1;
+	panels[1].names_buf = names1;
 
 	if (getcwd(panels[0].cwd, sizeof(panels[0].cwd)) == NULL)
 		strcpy(panels[0].cwd, "/");
@@ -1147,7 +1310,14 @@ int main(int argc, char **argv)
 	(void)panel_load(&panels[0]);
 	(void)panel_load(&panels[1]);
 
-	initscr();
+	maybe_clamp_winsize();
+	if (initscr() == NULL) {
+		fprintf(stderr,
+			"mc: curses init failed (out of memory?)\n"
+			"Try: enable swap, close other sessions, or: stty rows 24 cols 80\n"
+			"(set MC_NO_CLAMP_WINSZ=1 to disable auto clamp)\n");
+		return 1;
+	}
 	cbreak();
 	noecho();
 	keypad(stdscr, TRUE);

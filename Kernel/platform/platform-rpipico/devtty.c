@@ -134,15 +134,29 @@ void devtty_init(void)
 
         if (usb_detected)
         {
+            /*
+             * PicoCalc users typically want the built-in LCD to be tty1 so that
+             * login/curses apps appear on-device, even when USB is connected.
+             */
+#ifdef CONFIG_PICOCALC
+            devtty_defconfig(TTYDRV_LCD, NUM_DEV_TTY_LCD, 1);
+            devtty_defconfig(TTYDRV_USB, NUM_DEV_TTY_USB, 2);
+            devtty_defconfig(TTYDRV_UART, NUM_DEV_TTY_UART, 2 + NUM_DEV_TTY_USB);
+#else
             devtty_defconfig(TTYDRV_USB, NUM_DEV_TTY_USB, 1);
             devtty_defconfig(TTYDRV_UART, NUM_DEV_TTY_UART, 1 + NUM_DEV_TTY_USB);
             devtty_defconfig(TTYDRV_LCD, NUM_DEV_TTY_LCD, 2 + NUM_DEV_TTY_USB);
+#endif
             until = delayed_by_ms(get_absolute_time(), DEV_USB_INIT_TIMEOUT);
             while (absolute_time_diff_us(get_absolute_time(), until) > 0)
             {
                 tight_loop_contents();
             }
+#ifdef CONFIG_PICOCALC
+            kprintf("devtty: %s as default tty\n", "lcd");
+#else
             kprintf("devtty: %s as default tty\n", "usb");
+#endif
         }
         else
         {

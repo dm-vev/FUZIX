@@ -277,7 +277,7 @@ __force_inline static void __time_critical_func(pio_spi_write_async)(
  * @return The PSRAM configuration instance. This instance should be passed to
  * all PSRAM access functions.
  */
-psram_spi_inst_t psram_spi_init_clkdiv(PIO pio, int sm, float clkdiv, bool fudge);
+psram_spi_inst_t psram_spi_init_clkdiv(PIO pio, int sm, uint16_t clkdiv_int, uint8_t clkdiv_frac, bool fudge);
 
 /**
  * @brief Initialize the PSRAM over SPI. This function must be called before
@@ -485,6 +485,7 @@ __force_inline static void psram_write32(psram_spi_inst_t* spi, uint32_t addr, u
  * @param addr Address to write to.
  * @param val Value to write.
  */
+#if defined(PSRAM_ASYNC)
 __force_inline static void psram_write32_async(psram_spi_inst_t* spi, uint32_t addr, uint32_t val) {
     // Break the address into three bytes and send read command
     write32_command[3] = addr >> 16;
@@ -497,6 +498,7 @@ __force_inline static void psram_write32_async(psram_spi_inst_t* spi, uint32_t a
 
     pio_spi_write_async(spi, write32_command, sizeof(write32_command));
 };
+#endif
 
 
 static uint8_t read32_command[] = {
@@ -583,7 +585,7 @@ __force_inline static void psram_read(psram_spi_inst_t* spi, const uint32_t addr
     pio_spi_write_read_dma_blocking(spi, read_command, sizeof(read_command), dst, count);
 };
 
-
+#if defined(PSRAM_ASYNC)
 static uint8_t write_async_fast_command[134] = {
     0,          // n bits write
     0,          // 0 bits read
@@ -608,6 +610,7 @@ __force_inline static void psram_write_async_fast(psram_spi_inst_t* spi, uint32_
 
     pio_spi_write_async(spi, write_async_fast_command, 6 + count);
 };
+#endif
 
 
 #ifdef __cplusplus
