@@ -7,10 +7,12 @@
 #include "rf_menu.h"
 #include "rf_prompt.h"
 #include "rf_recording.h"
+#include "rf_replay.h"
 #include "rf_render.h"
 #include "rf_scan.h"
 #include "rf_sniffer.h"
 #include "rf_term.h"
+#include "rf_view.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -208,6 +210,11 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 		return;
 	case 's':
 	case 'S':
+		if (t->replay_active) {
+			t->replay_playing = !t->replay_playing;
+			rf_task_invalidate(t, RF_DIRTY_STATUS);
+			return;
+		}
 		t->scan_active = !t->scan_active;
 		t->scan_next_tick = 0;
 		rf_task_invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL);
@@ -219,21 +226,20 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 		return;
 	case 'p':
 	case 'P':
+		if (t->replay_active) {
+			t->replay_playing = !t->replay_playing;
+			rf_task_invalidate(t, RF_DIRTY_STATUS);
+			return;
+		}
 		t->capture_paused = !t->capture_paused;
 		rf_task_invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_SNIFFER);
 		return;
 	case 'r':
 	case 'R':
-		/* Minimal reset: clear energy/waterfall and counters. */
-		memset(t->energy_cur, 0, sizeof(t->energy_cur));
-		memset(t->energy_avg, 0, sizeof(t->energy_avg));
-		memset(t->energy_peak, 0, sizeof(t->energy_peak));
-		if (t->wf_buf && t->wf_cap)
-			memset(t->wf_buf, 0, t->wf_cap);
-		t->wf_head = 0;
-		t->sweep_count = 0;
-		t->last_sweep_tick = 0;
-		rf_task_invalidate(t, RF_DIRTY_ALL);
+		if (t->replay_active)
+			rf_replay_reset_view(t);
+		else
+			rf_view_reset(t);
 		return;
 	case 'm':
 	case 'M':
@@ -370,7 +376,12 @@ int rf_task_run(struct rf_task *t)
 
 		uint64_t tick = now_ms();
 		t->now_tick = tick;
-		rf_scan_tick(t, tick);
+		if (t->replay_active)
+			rf_replay_tick(t, tick);
+		else
+			rf_scan_tick(t, tick);
+		if (t->replay_active)
+			rf_replay_update_packet_cache(t);
 		rf_sniffer_tick_pps(t, tick);
 		rf_recording_flush(t, tick, 0);
 
@@ -393,6 +404,7 @@ void rf_task_destroy(struct rf_task *t)
 	rf_term_restore_stdin();
 	t->now_tick = now_ms();
 	rf_recording_stop(t, NULL, 0);
+	rf_replay_exit(t);
 	free(t->wf_buf);
 	t->wf_buf = NULL;
 	t->wf_cap = 0;

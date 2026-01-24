@@ -300,7 +300,9 @@ int rf_replay_enter(struct rf_task *t, const char *input, char *err, size_t errs
 
 void rf_replay_exit(struct rf_task *t)
 {
-	if (!t || !t->replay_active)
+	if (!t)
+		return;
+	if (!t->replay_active && !t->replay)
 		return;
 
 	t->replay_active = 0;
@@ -427,4 +429,3 @@ void rf_replay_time_text(const struct rf_task *t, char *out, size_t outsz)
 	}
 	snprintf(out, outsz, "t:%ds", (int)((t->replay_now_tick - t->replay->start_tick) / 1000u));
 }
-
