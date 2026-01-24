@@ -13,6 +13,7 @@ SRCS = \
 	rf_keys.c \
 	rf_utf8.c \
 	rf_cp1251.c \
+	rf_types.c \
 	rf_scan.c \
 	rf_sniffer.c \
 	rf_waterfall.c \

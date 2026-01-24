@@ -22,9 +22,20 @@ enum {
 enum {
 	RF_MAX_PACKETS = 256,
 	RF_PAYLOAD_PREFIX_BYTES = 8,
-	RF_MAX_DEVICES = 32,
-	RF_OCC_HIST_LEN = 64,
+	RF_MAX_DEVICES = 64,
+	RF_OCC_HIST_LEN = 128,
 	RF_ANNOT_MAX = 64,
+};
+
+enum {
+	RF_OCC_BYTES = (RF_NUM_CHANNELS + 7) / 8,
+};
+
+enum {
+	RF_ANA_OCC_THRESHOLD = 160,
+	RF_ANA_RETRY_WINDOW_TICKS = 60,
+	RF_ANA_BEST_INTERVAL_TICKS = 10 * 1000,
+	RF_ANA_PERIODIC_MIN_INTERVALS = 3,
 };
 
 /* Utility clamp helpers. */
@@ -47,4 +58,3 @@ static inline uint8_t rf_clamp_u8_int(int v)
 }
 
 #endif
-
