@@ -2,10 +2,15 @@ ROOT = ../..
 include $(ROOT)/Target/rules.armm0
 
 VEC_CLI ?= 0
+VEC_LITE ?= 1
 VEC_BUILD ?= $(shell git -C $(ROOT) rev-parse --short HEAD 2>/dev/null || echo unknown)
 VEC_BUILDTIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)
 
 CFLAGS += -DVEC_BUILD_STR="\"$(VEC_BUILD)\"" -DVEC_BUILDTIME_STR="\"$(VEC_BUILDTIME)\""
+
+ifeq ($(VEC_LITE),1)
+CFLAGS += -DVEC_LITE=1
+endif
 
 ifeq ($(VEC_CLI),1)
 APP = vector-cli
@@ -28,6 +33,22 @@ SRCS = \
 	vector_cli.c
 else
 APP = vector
+ifeq ($(VEC_LITE),1)
+SRCS = \
+	vec_ast.c \
+	vec_cas.c \
+	vec_env.c \
+	vec_eval_lite.c \
+	vec_fb.c \
+	vec_draw.c \
+	vec_keys.c \
+	vec_lexer.c \
+	vec_number.c \
+	vec_parser.c \
+	vec_plot.c \
+	vec_value.c \
+	vector.c
+else
 SRCS = \
 	vec_ast.c \
 	vec_cas.c \
@@ -49,6 +70,7 @@ SRCS = \
 	vec_plot.c \
 	vec_value.c \
 	vector.c
+endif
 endif
 OBJS = $(SRCS:.c=.o)
 

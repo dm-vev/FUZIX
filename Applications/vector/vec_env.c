@@ -33,7 +33,9 @@ void vec_env_init(vec_env *e)
 	(void)vec_env_set_var(e, "sqrt5", vec_value_number(vec_float(sqrt(5.0))));
 	(void)vec_env_set_var(e, "ln2", vec_value_number(vec_float(M_LN2)));
 	(void)vec_env_set_var(e, "ln10", vec_value_number(vec_float(M_LN10)));
+#ifndef VEC_LITE
 	(void)vec_env_set_var(e, "i", vec_value_complex(0, 1));
+#endif
 }
 
 void vec_env_destroy(vec_env *e)

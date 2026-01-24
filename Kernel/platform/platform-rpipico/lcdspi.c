@@ -1350,11 +1350,11 @@ int  lcd_getc(uint8_t devn){
             return -1;
 #ifdef HARDWARE_SCROLL
         if (lcd_text_enabled) {
-            if (c == 0x90) { /* PICOCALC_KEY_VIEW_UP */
+            if (c == 0xF0) { /* PICOCALC_KEY_VIEW_UP */
                 lcd_term_view_scroll_up();
                 continue;
             }
-            if (c == 0x91) { /* PICOCALC_KEY_VIEW_DOWN */
+            if (c == 0xF1) { /* PICOCALC_KEY_VIEW_DOWN */
                 lcd_term_view_scroll_down();
                 continue;
             }

@@ -91,6 +91,13 @@ static int active_panel;
 static char status_msg[128];
 static time_t status_ts;
 
+static void term_reset_attrs(void)
+{
+	/* Ensure LCD console is in default fg/bg (avoids "colored" bars). */
+	static const char seq[] = "\x1b[0m";
+	(void)write(1, seq, sizeof(seq) - 1);
+}
+
 static void status_set(const char *fmt, ...)
 {
 	va_list ap;
@@ -323,6 +330,13 @@ static void addnstr_compat(const char *s, int n)
 
 static void draw_boxed(int y, int x, int h, int w, const char *title)
 {
+	/* Clear interior first (avoids "garbage" on terminals without clear-to-eol). */
+	for (int iy = 1; iy < h - 1; iy++) {
+		move(y + iy, x + 1);
+		for (int ix = 1; ix < w - 1; ix++)
+			addch(' ');
+	}
+
 	mvaddch(y, x, ACS_ULCORNER);
 	mvaddch(y, x + w - 1, ACS_URCORNER);
 	mvaddch(y + h - 1, x, ACS_LLCORNER);
@@ -378,9 +392,51 @@ static void draw_panel(const struct panel *p, int y, int x, int h, int w, bool a
 
 	int list_y = y + 1;
 	int list_h = h - 2;
-	int name_w = w - 2 - 7 - 1 - 11; /* borders + size + space + mtime */
-	if (name_w < 8)
-		name_w = 8;
+	int avail = w - 2; /* inside the box */
+	if (avail < 1)
+		return;
+
+	/* Columns (when there is space): "name size mtime". */
+	const int size_w = 7;
+	int mtime_w = 11;
+	const int name_min = 8;
+	const int mark_w = 1;
+
+	/* Make sure we never wrap: shrink mtime, then drop it, then drop size. */
+	bool show_size = true;
+	bool show_mtime = true;
+
+	int name_w = avail - (1 + size_w) - (1 + mtime_w);
+	if (name_w < name_min) {
+		int want_mtime = avail - (1 + size_w) - (1 + name_min);
+		mtime_w = want_mtime > 0 ? want_mtime : 0;
+		if (mtime_w < 6)
+			mtime_w = 0;
+	}
+	if (!mtime_w)
+		show_mtime = false;
+
+	name_w = avail - (show_size ? (1 + size_w) : 0) - (show_mtime ? (1 + mtime_w) : 0);
+	if (name_w < 1) {
+		show_mtime = false;
+		name_w = avail - (show_size ? (1 + size_w) : 0);
+	}
+	if (name_w < 1) {
+		show_size = false;
+		name_w = avail;
+	}
+	if (name_w < 1)
+		return;
+
+	/* Reserve 1 column for selection marker ('>' or space). */
+	if (name_w < mark_w + 1) {
+		show_mtime = false;
+		show_size = false;
+		name_w = avail;
+		if (name_w < mark_w + 1)
+			return;
+	}
+	int name_text_w = name_w - mark_w;
 
 	for (int i = 0; i < list_h; i++) {
 		int idx = (int)p->top + i;
@@ -397,26 +453,53 @@ static void draw_panel(const struct panel *p, int y, int x, int h, int w, bool a
 		format_size(sz, sizeof(sz), e);
 		format_mtime(mt, sizeof(mt), e);
 
-		if (e->is_dir)
-			attron(A_BOLD);
-		if (sel)
-			attron(A_REVERSE);
-
 		char namebuf[PATH_MAX];
 		const char *ename = entry_name(p, e);
 		snprintf(namebuf, sizeof(namebuf), "%s%s", ename, e->is_dir ? "/" : "");
 
-		if ((int)strlen(namebuf) > name_w) {
-			namebuf[name_w - 1] = '~';
-			namebuf[name_w] = 0;
+		if ((int)strlen(namebuf) > name_text_w) {
+			namebuf[name_text_w - 1] = '~';
+			namebuf[name_text_w] = 0;
 		}
 
-		mvprintw(list_y + i, x + 1, "%-*s %7s %11s", name_w, namebuf, sz, mt);
+		char linebuf[PATH_MAX + 64];
+		if ((size_t)avail >= sizeof(linebuf))
+			avail = (int)sizeof(linebuf) - 1;
+		memset(linebuf, ' ', (size_t)avail);
+		linebuf[avail] = 0;
 
-		if (sel)
-			attroff(A_REVERSE);
-		if (e->is_dir)
-			attroff(A_BOLD);
+		/* Name (with marker) */
+		linebuf[0] = sel ? '>' : ' ';
+		for (int j = 0; j < name_text_w && namebuf[j]; j++)
+			linebuf[mark_w + j] = namebuf[j];
+
+		/* Size */
+		int pos = name_w;
+		if (show_size) {
+			if (pos < avail)
+				linebuf[pos++] = ' ';
+			int sl = (int)strlen(sz);
+			if (sl > size_w)
+				sl = size_w;
+			int start = pos + (size_w - sl);
+			for (int j = 0; j < sl && start + j < avail; j++)
+				linebuf[start + j] = sz[j];
+			pos += size_w;
+		}
+
+		/* Mtime */
+		if (show_mtime) {
+			if (pos < avail)
+				linebuf[pos++] = ' ';
+			int ml = (int)strlen(mt);
+			if (ml > mtime_w)
+				ml = mtime_w;
+			int start = pos + (mtime_w - ml);
+			for (int j = 0; j < ml && start + j < avail; j++)
+				linebuf[start + j] = mt[j];
+		}
+
+		mvprintw(list_y + i, x + 1, "%s", linebuf);
 	}
 }
 
@@ -877,6 +960,7 @@ static void draw_ui(void)
 {
 	int rows, cols;
 	getmaxyx(stdscr, rows, cols);
+	term_reset_attrs();
 	erase();
 
 	int top_h = 1;
@@ -894,12 +978,10 @@ static void draw_ui(void)
 	int left_w = w;
 	int right_w = cols - w;
 
-	attron(A_REVERSE);
 	move(0, 0);
 	for (int i = 0; i < cols; i++)
 		addch(' ');
 	mvprintw(0, 0, "mc (FUZIX)  Tab switch  F10 quit  ':' shell");
-	attroff(A_REVERSE);
 
 	draw_panel(&panels[0], 1, left_x, panel_h, left_w, active_panel == 0);
 	draw_panel(&panels[1], 1, right_x, panel_h, right_w, active_panel == 1);
@@ -908,18 +990,17 @@ static void draw_ui(void)
 	move(status_y, 0);
 	for (int i = 0; i < cols; i++)
 		addch(' ');
-	mvprintw(status_y, 0, "F1 Help  F3 View  F4 Edit  F5 Copy  F6 Move  F7 Mkdir  F8 Del  F10 Quit");
+	mvprintw(status_y, 0, "F1 Help  F2 Hidden  F3 View  F4 Edit  F5 Copy  ^R Move  ^N Mkdir  ^X Del  F10 Quit");
 
 	move(status_y + 1, 0);
-	attron(A_REVERSE);
 	for (int i = 0; i < cols; i++)
 		addch(' ');
 	if (status_msg[0]) {
 		mvprintw(status_y + 1, 0, "%s", status_msg);
 	}
-	attroff(A_REVERSE);
 
 	refresh();
+	term_reset_attrs();
 }
 
 static int read_key(void)
@@ -1050,8 +1131,8 @@ static void do_help(void)
 	mvprintw(4, 0, "Backspace: parent dir");
 	mvprintw(5, 0, "Tab: switch panel");
 	mvprintw(6, 0, "F2: show hidden   F3: view (less)   F4: edit (vi)");
-	mvprintw(7, 0, "F5: copy          F6: move/rename");
-	mvprintw(8, 0, "F7: mkdir         F8: delete");
+	mvprintw(7, 0, "F5: copy          ^R: move/rename");
+	mvprintw(8, 0, "^N: mkdir         ^X: delete");
 	mvprintw(9, 0, "':' : shell");
 	mvprintw(10, 0, "F10: quit");
 	mvprintw(rows - 1, 0, "Press any key...");
@@ -1073,14 +1154,17 @@ static void handle_key(int ch)
 		list_h = 1;
 
 	switch (ch) {
+	case K_ESC:
+		raise(SIGTERM);
+		break;
 	case '\t':
 		active_panel ^= 1;
 		break;
 	case K_LEFT:
-		active_panel = 0;
+		active_panel ^= 1;
 		break;
 	case K_RIGHT:
-		active_panel = 1;
+		active_panel ^= 1;
 		break;
 	case K_UP:
 		if (p->selected)
@@ -1156,12 +1240,15 @@ static void handle_key(int ch)
 	case K_F5:
 		do_copy();
 		break;
+	case 18: /* Ctrl-R */
 	case K_F6:
 		do_move();
 		break;
+	case 14: /* Ctrl-N */
 	case K_F7:
 		do_mkdir();
 		break;
+	case 24: /* Ctrl-X */
 	case K_F8:
 		do_delete();
 		break;
@@ -1278,7 +1365,7 @@ int main(int argc, char **argv)
 	 * Keep static working sets small: on tiny systems curses may fail to
 	 * allocate its screen buffers if the process image is too large.
 	 */
-	enum { MC_MAX_ENTRIES = 48, MC_NAMES_CAP = 1024 };
+	enum { MC_MAX_ENTRIES = 1024, MC_NAMES_CAP = 4096 };
 	static struct entry entries0[MC_MAX_ENTRIES];
 	static struct entry entries1[MC_MAX_ENTRIES];
 	static char names0[MC_NAMES_CAP];

@@ -437,6 +437,7 @@ bget ../../../Applications/netd/netstat
 bget ../../../Applications/netd/arp
 bget ../../../Applications/netd/nc
 bget ../../../Applications/mc/mc
+bget ../../../Applications/archive/archive
 bget ../../../Applications/vector/vector
 
 chmod 0755 netd-slip
@@ -455,6 +456,7 @@ chmod 0755 netstat
 chmod 0755 arp
 chmod 0755 nc
 chmod 0755 mc
+chmod 0755 archive
 chmod 0755 vector
 ln htget wget
 ln dig dnslookup

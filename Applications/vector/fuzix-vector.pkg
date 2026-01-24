@@ -1,4 +1,4 @@
 package vector
 
 f 0755 /usr/bin/vector vector
-
+f 0755 /usr/bin/vector-cli vector-cli

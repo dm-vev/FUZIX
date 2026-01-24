@@ -11,7 +11,12 @@
 
 #define I2C_KBD_ADDR 0x1F
 
-#define I2C_KBD_TIMEOUT_US 1000
+/*
+ * Some PicoCalc firmware revisions may stretch the clock or be slow to ACK
+ * after longer idle periods; keep this high enough to avoid permanent "no key"
+ * states after inactivity.
+ */
+#define I2C_KBD_TIMEOUT_US 5000
 
 void init_i2c_kbd();
 int read_i2c_kbd();

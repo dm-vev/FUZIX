@@ -1,4 +1,5 @@
 #include "vec_eval.h"
+#ifndef VEC_LITE
 #include "vec_cas.h"
 #include "vec_cas_ext.h"
 #include "vec_linalg.h"
@@ -7,6 +8,7 @@
 #include "vec_poly.h"
 #include "vec_poly_factor.h"
 #include "vec_poly_rat.h"
+#endif
 
 #include <math.h>
 #include <stdio.h>
@@ -1099,6 +1101,130 @@ static vec_node *value_to_node_take(vec_value *v)
 	}
 }
 
+#ifdef VEC_LITE
+static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const vec_value *ov_value,
+		     vec_value *out, char *err, size_t errsz)
+{
+	if (!n || n->kind != VEC_NODE_CALL || !n->u.call.name) {
+		snprintf(err, errsz, "eval: bad call");
+		return -1;
+	}
+
+	const char *name = n->u.call.name;
+	size_t argc = n->u.call.argc;
+	if (argc > 8) {
+		snprintf(err, errsz, "eval: too many args");
+		return -1;
+	}
+
+	/* Special forms (operate on raw nodes). */
+	if (!strcmp(name, "expr") && argc == 1) {
+		vec_node *simp = vec_node_simplify(n->u.call.args[0]);
+		if (!simp) {
+			snprintf(err, errsz, "eval: out of memory");
+			return -1;
+		}
+		*out = vec_value_expr(simp);
+		return 0;
+	}
+	if (!strcmp(name, "simp") && argc == 1) {
+		vec_node *simp = vec_node_simplify(n->u.call.args[0]);
+		if (!simp) {
+			snprintf(err, errsz, "eval: out of memory");
+			return -1;
+		}
+		*out = vec_value_expr(simp);
+		return 0;
+	}
+
+	vec_value args[8];
+	memset(args, 0, sizeof(args));
+	for (size_t i = 0; i < argc; i++) {
+		if (vec_eval_node_impl(e, n->u.call.args[i], ov_name, ov_value, &args[i], err, errsz) != 0) {
+			for (size_t j = 0; j < i; j++)
+				vec_value_destroy(&args[j]);
+			return -1;
+		}
+		if (args[i].kind != VEC_VALUE_NUMBER) {
+			for (size_t j = 0; j <= i; j++)
+				vec_value_destroy(&args[j]);
+			snprintf(err, errsz, "eval: %s expects numbers", name);
+			return -1;
+		}
+	}
+
+	double a0 = (argc >= 1) ? vec_number_float64(args[0].num) : 0.0;
+	double a1 = (argc >= 2) ? vec_number_float64(args[1].num) : 0.0;
+	double a2 = (argc >= 3) ? vec_number_float64(args[2].num) : 0.0;
+
+	if (!strcmp(name, "sin") && argc == 1)
+		*out = vec_value_number(vec_float(sin(a0)));
+	else if (!strcmp(name, "cos") && argc == 1)
+		*out = vec_value_number(vec_float(cos(a0)));
+	else if (!strcmp(name, "tan") && argc == 1)
+		*out = vec_value_number(vec_float(tan(a0)));
+	else if (!strcmp(name, "asin") && argc == 1)
+		*out = vec_value_number(vec_float(asin(a0)));
+	else if (!strcmp(name, "acos") && argc == 1)
+		*out = vec_value_number(vec_float(acos(a0)));
+	else if (!strcmp(name, "atan") && argc == 1)
+		*out = vec_value_number(vec_float(atan(a0)));
+	else if (!strcmp(name, "atan2") && argc == 2)
+		*out = vec_value_number(vec_float(atan2(a0, a1)));
+	else if (!strcmp(name, "sqrt") && argc == 1)
+		*out = vec_value_number(vec_float(sqrt(a0)));
+	else if (!strcmp(name, "abs") && argc == 1)
+		*out = vec_value_number(vec_float(fabs(a0)));
+	else if (!strcmp(name, "floor") && argc == 1)
+		*out = vec_value_number(vec_float(floor(a0)));
+	else if (!strcmp(name, "ceil") && argc == 1)
+		*out = vec_value_number(vec_float(ceil(a0)));
+	else if (!strcmp(name, "exp") && argc == 1)
+		*out = vec_value_number(vec_float(exp(a0)));
+	else if (!strcmp(name, "log") && argc == 1)
+		*out = vec_value_number(vec_float(log(a0)));
+	else if (!strcmp(name, "log10") && argc == 1)
+		*out = vec_value_number(vec_float(log10(a0)));
+	else if (!strcmp(name, "pow") && argc == 2)
+		*out = vec_value_number(vec_float(pow(a0, a1)));
+	else if (!strcmp(name, "min") && argc == 2)
+		*out = vec_value_number(vec_float(a0 < a1 ? a0 : a1));
+	else if (!strcmp(name, "max") && argc == 2)
+		*out = vec_value_number(vec_float(a0 > a1 ? a0 : a1));
+	else if (!strcmp(name, "clamp") && argc == 3) {
+		double v = a0;
+		if (v < a1)
+			v = a1;
+		if (v > a2)
+			v = a2;
+		*out = vec_value_number(vec_float(v));
+	} else {
+		/* User-defined single-arg functions: f(x)=... */
+		const vec_userfunc *uf;
+		if (vec_env_get_func(e, name, &uf) == 0 && uf && uf->body && uf->param) {
+			if (argc != 1) {
+				snprintf(err, errsz, "eval: %s expects 1 argument", name);
+				for (size_t i = 0; i < argc; i++)
+					vec_value_destroy(&args[i]);
+				return -1;
+			}
+			int rc = vec_eval_node_impl(e, uf->body, uf->param, &args[0], out, err, errsz);
+			for (size_t i = 0; i < argc; i++)
+				vec_value_destroy(&args[i]);
+			return rc;
+		}
+
+		snprintf(err, errsz, "eval: unknown function '%s'", name);
+		for (size_t i = 0; i < argc; i++)
+			vec_value_destroy(&args[i]);
+		return -1;
+	}
+
+	for (size_t i = 0; i < argc; i++)
+		vec_value_destroy(&args[i]);
+	return 0;
+}
+#else
 static int eval_call(vec_env *e, const vec_node *n, const char *ov_name, const vec_value *ov_value,
 		     vec_value *out, char *err, size_t errsz)
 {
@@ -4251,6 +4377,7 @@ fail:
 	free(args);
 	return -1;
 }
+#endif
 
 static int eval_compare(vec_env *e, vec_cmp_op op, const vec_value *a, const vec_value *b,
 			vec_value *out, char *err, size_t errsz)

@@ -1398,8 +1398,12 @@ static void ui_handle_command(struct ui_state *u, const char *cmdline)
 		return;
 	}
 	if (!strcmp(cmdline, "exact")) {
+#ifdef VEC_LITE
+		ui_set_message(u, "mode: exact disabled");
+#else
 		u->env.mode = VEC_MODE_EXACT;
 		ui_set_message(u, "mode: exact");
+#endif
 		return;
 	}
 	if (!strcmp(cmdline, "float")) {
@@ -1462,21 +1466,21 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 		if (a->kind == VEC_ACT_ASSIGN_VAR) {
 			vec_value v;
 			memset(err, 0, sizeof(err));
-			if (vec_eval_node(&u->env, a->expr, &v, err, sizeof(err)) != 0) {
-				if (!strncmp(err, "eval: unknown variable", 22) &&
-				    a->var_name && (!strcmp(a->var_name, "y") || !strcmp(a->var_name, "z")) &&
-				    a->expr && vec_node_has_ident(a->expr, "x")) {
-					vec_node *simp = vec_node_simplify(a->expr);
-					if (!simp) {
-						ui_append_line(u, "eval: out of memory");
-						continue;
-					}
-					vec_value ev = vec_value_expr(simp);
-					if (vec_env_set_var(&u->env, a->var_name, ev) != 0) {
-						ui_append_line(u, "eval: out of memory");
-						vec_value_destroy(&ev);
-						continue;
-					}
+				if (vec_eval_node(&u->env, a->expr, &v, err, sizeof(err)) != 0) {
+					if (!strncmp(err, "eval: unknown variable", 22) &&
+					    a->var_name && (!strcmp(a->var_name, "y") || !strcmp(a->var_name, "z")) &&
+					    a->expr && vec_node_has_ident(a->expr, "x")) {
+						vec_node *expr = vec_node_clone(a->expr);
+						if (!expr) {
+							ui_append_line(u, "eval: out of memory");
+							continue;
+						}
+						vec_value ev = vec_value_expr(expr);
+						if (vec_env_set_var(&u->env, a->var_name, ev) != 0) {
+							ui_append_line(u, "eval: out of memory");
+							vec_value_destroy(&ev);
+							continue;
+						}
 					{
 						char buf[160];
 						char out[160];
@@ -1484,19 +1488,19 @@ static void ui_eval_line(struct ui_state *u, const char *line)
 							 ui_format_value(u, &ev, buf, sizeof(buf)));
 						ui_append_line(u, out);
 					}
-					{
-						char exbuf[128];
-						exbuf[0] = 0;
-						(void)vec_node_to_string(simp, exbuf, sizeof(exbuf));
-						char src[160];
-						snprintf(src, sizeof(src), "%s = %s", a->var_name, exbuf[0] ? exbuf : "<expr>");
-						ui_set_graph_clone(u, src, simp);
-						if (vec_node_has_ident(simp, "x"))
-							(void)ui_add_plot_func(u, src, simp);
+						{
+							char exbuf[128];
+							exbuf[0] = 0;
+							(void)vec_node_to_string(expr, exbuf, sizeof(exbuf));
+							char src[160];
+							snprintf(src, sizeof(src), "%s = %s", a->var_name, exbuf[0] ? exbuf : "<expr>");
+							ui_set_graph_clone(u, src, expr);
+							if (vec_node_has_ident(expr, "x"))
+								(void)ui_add_plot_func(u, src, expr);
+						}
+						continue;
 					}
-					continue;
-				}
-				ui_append_line(u, err[0] ? err : "eval error");
+					ui_append_line(u, err[0] ? err : "eval error");
 				continue;
 			}
 			if (vec_env_set_var(&u->env, a->var_name, v) != 0) {
@@ -2457,30 +2461,10 @@ int main(int argc, char **argv)
 		fflush(stderr);
 	}
 
-	/* Prebuild an initial terminal frame in text mode to avoid a black screen. */
-	char frame[64][256];
-	if (u.rows > (int)(sizeof(frame) / sizeof(frame[0])))
-		u.rows = (int)(sizeof(frame) / sizeof(frame[0]));
-	for (int r = 0; r < u.rows; r++)
-		frame[r][0] = 0;
-	ui_header_text(&u, frame[0], sizeof(frame[0]));
-	for (int r = 1; r < u.rows - 2; r++) {
-		snprintf(frame[r], sizeof(frame[r]), "%s", "");
-	}
-	{
-		const char *prompt = "> ";
-		snprintf(frame[u.rows - 2], sizeof(frame[u.rows - 2]), "%s", prompt);
-	}
-	{
-		int status_cursor_col = -1;
-		int status_cursor_on = 0;
-		ui_status_text(&u, frame[u.rows - 1], sizeof(frame[u.rows - 1]), &status_cursor_col, &status_cursor_on);
-	}
-
-	if (verbose_log) {
-		fprintf(stderr, "vector: switching to graphics mode\n");
-		fflush(stderr);
-	}
+		if (verbose_log) {
+			fprintf(stderr, "vector: switching to graphics mode\n");
+			fflush(stderr);
+		}
 	if (vec_fb_activate(&u.fb, fb_err, sizeof(fb_err)) != 0) {
 		fprintf(stderr, "%s\n", fb_err);
 		kbd_restore_all(kbds, (size_t)kbd_count);
@@ -2489,22 +2473,34 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	/* Draw the prebuilt frame immediately after switching modes. */
-	{
-		struct vec_color fg = {0xEE, 0xEE, 0xEE};
-		struct vec_color header_bg = {0x22, 0x22, 0x22};
-		struct vec_color panel_bg = {0x08, 0x08, 0x08};
-		struct vec_color input_bg = {0x00, 0x00, 0x00};
-		struct vec_color status_bg = {0x22, 0x22, 0x22};
+		/* Draw a minimal initial frame immediately after switching modes. */
+		{
+			char row[256];
+			struct vec_color fg = {0xEE, 0xEE, 0xEE};
+			struct vec_color header_bg = {0x22, 0x22, 0x22};
+			struct vec_color panel_bg = {0x08, 0x08, 0x08};
+			struct vec_color input_bg = {0x00, 0x00, 0x00};
+			struct vec_color status_bg = {0x22, 0x22, 0x22};
 
-		(void)vec_draw_text_row(&u.fb, 0, frame[0], fg, header_bg, -1, 0);
-		for (int r = 1; r < u.rows - 2; r++)
-			(void)vec_draw_text_row(&u.fb, r, frame[r], fg, panel_bg, -1, 0);
-		(void)vec_draw_text_row(&u.fb, u.rows - 2, frame[u.rows - 2], fg, input_bg, 2, 1);
-		(void)vec_draw_text_row(&u.fb, u.rows - 1, frame[u.rows - 1], fg, status_bg, -1, 0);
-		if (u.fb.mode == FB_MODE_MEMORY)
-			(void)vec_fb_flush(&u.fb, NULL);
-	}
+			ui_header_text(&u, row, sizeof(row));
+			(void)vec_draw_text_row(&u.fb, 0, row, fg, header_bg, -1, 0);
+
+			row[0] = 0;
+			for (int r = 1; r < u.rows - 2; r++)
+				(void)vec_draw_text_row(&u.fb, r, row, fg, panel_bg, -1, 0);
+
+			snprintf(row, sizeof(row), "> ");
+			(void)vec_draw_text_row(&u.fb, u.rows - 2, row, fg, input_bg, 2, 1);
+
+			{
+				int status_cursor_col = -1;
+				int status_cursor_on = 0;
+				ui_status_text(&u, row, sizeof(row), &status_cursor_col, &status_cursor_on);
+			}
+			(void)vec_draw_text_row(&u.fb, u.rows - 1, row, fg, status_bg, -1, 0);
+			if (u.fb.mode == FB_MODE_MEMORY)
+				(void)vec_fb_flush(&u.fb, NULL);
+		}
 
 	if (verbose_log) {
 		fprintf(stderr, "vector: first frame drawn\n");

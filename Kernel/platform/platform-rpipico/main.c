@@ -85,7 +85,16 @@ void fatal_exception_handler(struct extended_exception_frame* eh)
     kprintf("UDATA=%p KSTACK=%p-%p\n", &udata, &udata+1, ((uint32_t)&udata) + UDATA_SIZE);
     kprintf("user mode relative: lr=%p pc=%p isp=%p brk=%p\n",
         eh->lr-PROGLOAD, eh->pc-PROGLOAD, udata.u_isp, udata.u_break);
-    panic("fatal exception");
+    /*
+     * Do not call panic()/plt_monitor() here: on Pico SDK this can call
+     * sleep_*() which is not allowed from an exception handler.
+     *
+     * We already printed the full exception frame; halt in-place so the
+     * message stays on screen.
+     */
+    multicore_reset_core1();
+    for (;;)
+        tight_loop_contents();
 }
 
 void syscall_handler(struct svc_frame* eh)

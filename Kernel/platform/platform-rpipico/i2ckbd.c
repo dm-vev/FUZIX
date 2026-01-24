@@ -73,35 +73,105 @@ static struct picocalc_poll_config poll_cfg;
 
 static uint8_t status_phase;
 static int ctrlheld;
+static uint32_t i2c_consecutive_errors;
+static uint32_t i2c_last_recover_ms;
+
+static void i2c_kbd_hw_init_locked(void)
+{
+    gpio_set_function(I2C_KBD_SCL, GPIO_FUNC_I2C);
+    gpio_set_function(I2C_KBD_SDA, GPIO_FUNC_I2C);
+    i2c_init(I2C_KBD_MOD, I2C_KBD_SPEED);
+    gpio_pull_up(I2C_KBD_SCL);
+    gpio_pull_up(I2C_KBD_SDA);
+}
+
+static void i2c_kbd_bus_recover_locked(void)
+{
+    /*
+     * Recover a wedged I2C bus (eg SDA held low). This can happen after long
+     * idle periods if the PicoCalc keyboard/PMU MCU goes to sleep and the bus
+     * is left in a bad state.
+     *
+     * Strategy:
+     * - deinit I2C peripheral
+     * - bit-bang SCL pulses to release the slave
+     * - re-init the peripheral
+     *
+     * Must be called with i2c_kbd_lock held.
+     */
+    i2c_deinit(I2C_KBD_MOD);
+
+    gpio_set_function(I2C_KBD_SCL, GPIO_FUNC_SIO);
+    gpio_set_function(I2C_KBD_SDA, GPIO_FUNC_SIO);
+    gpio_set_pulls(I2C_KBD_SCL, true, false);
+    gpio_set_pulls(I2C_KBD_SDA, true, false);
+
+    gpio_set_dir(I2C_KBD_SCL, GPIO_OUT);
+    gpio_set_dir(I2C_KBD_SDA, GPIO_IN);
+    gpio_put(I2C_KBD_SCL, 1);
+    sleep_us(5);
+
+    for (int i = 0; i < 9; i++) {
+        gpio_put(I2C_KBD_SCL, 0);
+        sleep_us(5);
+        gpio_put(I2C_KBD_SCL, 1);
+        sleep_us(5);
+    }
+
+    /* Attempt to generate a STOP (drive SDA low then release while SCL high). */
+    gpio_set_dir(I2C_KBD_SDA, GPIO_OUT);
+    gpio_put(I2C_KBD_SDA, 0);
+    sleep_us(5);
+    gpio_put(I2C_KBD_SCL, 1);
+    sleep_us(5);
+    gpio_set_dir(I2C_KBD_SDA, GPIO_IN);
+    sleep_us(5);
+
+    i2c_kbd_hw_init_locked();
+}
 
 /*
- * PicoCalc keyboard sends non-ASCII bytes for special keys. Translate them
- * into VT100-ish escape sequences so curses and full-screen apps work.
+ * PicoCalc keyboard FIFO (see upstream ClockworkPi PicoCalc code):
+ * - High byte: key code (see Code/picocalc_keyboard/keyboard.h)
+ * - Low byte: key_state (pressed/hold/released)
+ *
+ * Translate non-ASCII keys into VT100-ish escape sequences so curses and
+ * full-screen apps work.
  *
  * Keep viewback scrolling available via Ctrl+Up / Ctrl+Down (handled by LCD
  * TTY driver) instead of eating plain Up/Down.
  */
 enum {
-    PICOCALC_KEY_F1 = 0xA1,
-    PICOCALC_KEY_F2 = 0xA2,
-    PICOCALC_KEY_F3 = 0xA3,
-    PICOCALC_KEY_F4 = 0xA4,
-    PICOCALC_KEY_F5 = 0xA5,
-    /* Optional if firmware ever reports them. */
-    PICOCALC_KEY_F6 = 0xA6,
-    PICOCALC_KEY_F7 = 0xA7,
-    PICOCALC_KEY_F8 = 0xA8,
-    PICOCALC_KEY_F9 = 0xA9,
-    PICOCALC_KEY_F10 = 0xAA,
+    KEY_STATE_PRESSED = 1,
+    KEY_STATE_HOLD = 2,
+    KEY_STATE_RELEASED = 3,
 
-    PICOCALC_KEY_UP = 0xB5,
-    PICOCALC_KEY_DOWN = 0xB6,
-    PICOCALC_KEY_LEFT = 0xB7,
-    PICOCALC_KEY_RIGHT = 0xB8,
+    KEY_MOD_ALT = 0xA1,
+    KEY_MOD_SHL = 0xA2,
+    KEY_MOD_SHR = 0xA3,
+    KEY_MOD_SYM = 0xA4,
+    KEY_MOD_CTRL = 0xA5,
+
+    KEY_ESC = 0xB1,
+    KEY_LEFT = 0xB4,
+    KEY_UP = 0xB5,
+    KEY_DOWN = 0xB6,
+    KEY_RIGHT = 0xB7,
+
+    KEY_F1 = 0x81,
+    KEY_F2 = 0x82,
+    KEY_F3 = 0x83,
+    KEY_F4 = 0x84,
+    KEY_F5 = 0x85,
+    KEY_F6 = 0x86,
+    KEY_F7 = 0x87,
+    KEY_F8 = 0x88,
+    KEY_F9 = 0x89,
+    KEY_F10 = 0x90,
 
     /* Internal: consumed by lcd_getc() for viewback scrolling. */
-    PICOCALC_KEY_VIEW_UP = 0x90,
-    PICOCALC_KEY_VIEW_DOWN = 0x91,
+    PICOCALC_KEY_VIEW_UP = 0xF0,
+    PICOCALC_KEY_VIEW_DOWN = 0xF1,
 };
 
 static uint32_t now_ms(void)
@@ -114,10 +184,12 @@ static void i2c_record_ok(void)
     i2c_backoff = poll_cfg.backoff_min_us ? poll_cfg.backoff_min_us : PICOCALC_I2C_BACKOFF_MIN_US;
     i2c_stats.backoff_us = i2c_backoff;
     i2c_stats.last_ok_ms = now_ms();
+    i2c_consecutive_errors = 0;
 }
 
 static void i2c_record_error(void)
 {
+    i2c_consecutive_errors++;
     uint32_t next = i2c_backoff * 2u;
     uint32_t min_us = poll_cfg.backoff_min_us ? poll_cfg.backoff_min_us : PICOCALC_I2C_BACKOFF_MIN_US;
     uint32_t max_us = poll_cfg.backoff_max_us ? poll_cfg.backoff_max_us : PICOCALC_I2C_BACKOFF_MAX_US;
@@ -130,14 +202,26 @@ static void i2c_record_error(void)
     i2c_backoff = next;
     i2c_stats.backoff_us = i2c_backoff;
     i2c_stats.last_err_ms = now_ms();
+
+    /*
+     * If we keep failing, attempt a bus recovery. Without this, the keyboard
+     * can get stuck permanently after the first error, especially after long
+     * idle periods.
+     */
+    if (i2c_consecutive_errors >= 8) {
+        uint32_t now = i2c_stats.last_err_ms;
+        if ((uint32_t)(now - i2c_last_recover_ms) >= 1000) {
+            i2c_last_recover_ms = now;
+            i2c_kbd_bus_recover_locked();
+            i2c_backoff = min_us;
+            i2c_stats.backoff_us = i2c_backoff;
+            i2c_consecutive_errors = 0;
+        }
+    }
 }
 
 void init_i2c_kbd(){
-    gpio_set_function(I2C_KBD_SCL, GPIO_FUNC_I2C);
-    gpio_set_function(I2C_KBD_SDA, GPIO_FUNC_I2C);
-    i2c_init(I2C_KBD_MOD, I2C_KBD_SPEED);
-    gpio_pull_up(I2C_KBD_SCL);
-    gpio_pull_up(I2C_KBD_SDA);
+    i2c_kbd_hw_init_locked();
 
     int spin_id = spin_lock_claim_unused(true);
     i2c_kbd_lock = spin_lock_init(spin_id);
@@ -148,6 +232,8 @@ void init_i2c_kbd(){
     memset(&i2c_stats, 0, sizeof(i2c_stats));
     i2c_backoff = PICOCALC_I2C_BACKOFF_MIN_US;
     i2c_stats.backoff_us = i2c_backoff;
+    i2c_consecutive_errors = 0;
+    i2c_last_recover_ms = 0;
     memset(&poll_cfg, 0, sizeof(poll_cfg));
     poll_cfg.kbd_poll_us = PICOCALC_KBD_POLL_US;
     poll_cfg.status_poll_us = PICOCALC_STATUS_POLL_US;
@@ -296,89 +382,98 @@ void picocalc_kbd_poll(void)
             return;
         }
 
-        if (buff == 0xA503) {
-            ctrlheld = 0;
-            continue;
-        }
-        if (buff == 0xA502) {
-            ctrlheld = 1;
+        uint8_t state = (uint8_t)(buff & 0xFF);
+        uint8_t c = (uint8_t)(buff >> 8);
+
+        /* Track modifier press/release if the firmware reports them. */
+        if (c == KEY_MOD_CTRL) {
+            if (state == KEY_STATE_PRESSED)
+                ctrlheld = 1;
+            else if (state == KEY_STATE_RELEASED)
+                ctrlheld = 0;
             continue;
         }
 
-        if ((buff & 0xff) != 1) {
+        /*
+         * Ignore releases for non-modifier keys. For holds, treat as pressed
+         * so navigation repeats.
+         */
+        if (state != KEY_STATE_PRESSED && state != KEY_STATE_HOLD)
             continue;
-        }
 
-        int c = buff >> 8;
         switch (c) {
-        case PICOCALC_KEY_F1:
+        case KEY_ESC:
+            kbd_ring_put(0x1B);
+            continue;
+        case KEY_F1:
             kbd_ring_put_esc_ss3('P');
             continue;
-        case PICOCALC_KEY_F2:
+        case KEY_F2:
             kbd_ring_put_esc_ss3('Q');
             continue;
-        case PICOCALC_KEY_F3:
+        case KEY_F3:
             kbd_ring_put_esc_ss3('R');
             continue;
-        case PICOCALC_KEY_F4:
+        case KEY_F4:
             kbd_ring_put_esc_ss3('S');
             continue;
-        case PICOCALC_KEY_F5: {
+        case KEY_F5: {
             const uint8_t seq[] = { 0x1B, '[', '1', '5', '~' };
             kbd_ring_put_seq(seq, sizeof(seq));
             continue;
         }
-        case PICOCALC_KEY_F6: {
+        case KEY_F6: {
             const uint8_t seq[] = { 0x1B, '[', '1', '7', '~' };
             kbd_ring_put_seq(seq, sizeof(seq));
             continue;
         }
-        case PICOCALC_KEY_F7: {
+        case KEY_F7: {
             const uint8_t seq[] = { 0x1B, '[', '1', '8', '~' };
             kbd_ring_put_seq(seq, sizeof(seq));
             continue;
         }
-        case PICOCALC_KEY_F8: {
+        case KEY_F8: {
             const uint8_t seq[] = { 0x1B, '[', '1', '9', '~' };
             kbd_ring_put_seq(seq, sizeof(seq));
             continue;
         }
-        case PICOCALC_KEY_F9: {
+        case KEY_F9: {
             const uint8_t seq[] = { 0x1B, '[', '2', '0', '~' };
             kbd_ring_put_seq(seq, sizeof(seq));
             continue;
         }
-        case PICOCALC_KEY_F10: {
+        case KEY_F10: {
             const uint8_t seq[] = { 0x1B, '[', '2', '1', '~' };
             kbd_ring_put_seq(seq, sizeof(seq));
             continue;
         }
-        case PICOCALC_KEY_UP:
+        case KEY_UP:
             if (ctrlheld)
                 kbd_ring_put(PICOCALC_KEY_VIEW_UP);
             else
                 kbd_ring_put_esc_csi('A');
             continue;
-        case PICOCALC_KEY_DOWN:
+        case KEY_DOWN:
             if (ctrlheld)
                 kbd_ring_put(PICOCALC_KEY_VIEW_DOWN);
             else
                 kbd_ring_put_esc_csi('B');
             continue;
-        case PICOCALC_KEY_RIGHT:
+        case KEY_RIGHT:
             kbd_ring_put_esc_csi('C');
             continue;
-        case PICOCALC_KEY_LEFT:
+        case KEY_LEFT:
             kbd_ring_put_esc_csi('D');
             continue;
         default:
             break;
         }
-        if (c >= 'a' && c <= 'z' && ctrlheld)
-            c = c - 'a' + 1;
 
-        if (c >= 0 && c <= 0xFF)
-            kbd_ring_put((uint8_t)c);
+        /* ASCII and control translation. */
+        if (c >= 'a' && c <= 'z' && ctrlheld)
+            c = (uint8_t)(c - 'a' + 1);
+
+        kbd_ring_put(c);
     }
     spin_unlock(i2c_kbd_lock, spin);
 }

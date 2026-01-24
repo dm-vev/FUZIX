@@ -239,7 +239,13 @@ extern uint8_t progbase[USERMEM];
  *
  * To force a fixed root device without prompting, define BOOTDEVICE here.
  */
-/* #define BOOTDEVICE 2 */
+/*
+ * Default to SD card partition 1 (hdb1) so updating via dd works.
+ * Override by defining BOOTDEVICE in the build environment if needed.
+ */
+#ifndef BOOTDEVICE
+#define BOOTDEVICE 0x0011
+#endif
 
 #define MANGLED 1
 #include "mangle.h"

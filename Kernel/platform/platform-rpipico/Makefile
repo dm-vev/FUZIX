@@ -69,6 +69,9 @@ image:: world
 	./update-flash.sh
 	../../../Standalone/mkftl -s 1952 -e 0x1000 -g 10 filesystem.img -o filesystem.ftl
 	${PICOTOOL} uf2 convert filesystem.ftl -t bin filesystem.uf2 -o 0x10018000 ${PICOTOOLFLAGS}
+	# Convenience: a single UF2 that updates both kernel (fuzix.uf2) and the
+	# flash filesystem (filesystem.uf2). UF2 supports concatenation.
+	cat $(BUILDDIR)/fuzix.uf2 filesystem.uf2 > fuzix+filesystem.uf2
 
 diskimage:
 
@@ -86,6 +89,7 @@ clean:
 	$(MAKE) -C ../../../Applications/cave -f Makefile.armm0 clean
 	$(MAKE) -C ../../../Applications/cursesgames -f Makefile.armm0 clean
 	$(MAKE) -C ../../../Applications/mc -f Makefile.armm0 clean
+	$(MAKE) -C ../../../Applications/archive -f Makefile.armm0 clean
 	$(MAKE) -C ../../../Applications/vector -f Makefile.armm0 clean
 	$(MAKE) -C ../../../Standalone clean
 	$(MAKE) -C utils clean
@@ -102,6 +106,8 @@ world: $(BUILDDIR)/fuzix.elf
 	$(MAKE) -C ../../../Applications/cave -f Makefile.armm0
 	$(MAKE) -C ../../../Applications/cursesgames -f Makefile.armm0
 	$(MAKE) -C ../../../Applications/mc -f Makefile.armm0
-	$(MAKE) -C ../../../Applications/vector -f Makefile.armm0
+	$(MAKE) -C ../../../Applications/archive -f Makefile.armm0
+	$(MAKE) -C ../../../Applications/vector -f Makefile.armm0 VEC_LITE=1
+	$(MAKE) -C ../../../Applications/vector -f Makefile.armm0 VEC_CLI=1
 	$(MAKE) -C ../../../Standalone
 	$(MAKE) -C utils
