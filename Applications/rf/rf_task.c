@@ -1,6 +1,7 @@
 #include "rf_task.h"
 
 #include "rf_draw.h"
+#include "rf_filters.h"
 #include "rf_keys.h"
 #include "rf_layout.h"
 #include "rf_menu.h"
@@ -104,6 +105,10 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 	}
 	if (t->show_menu) {
 		rf_menu_handle_key(t, k);
+		return;
+	}
+	if (t->show_filters) {
+		rf_filters_handle_key(t, k);
 		return;
 	}
 
@@ -248,7 +253,7 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 	}
 	case 'f':
 	case 'F':
-		/* TODO: filters overlay (Spark filters_actions.go). */
+		rf_filters_toggle(t);
 		return;
 	case 'h':
 	case 'H':
