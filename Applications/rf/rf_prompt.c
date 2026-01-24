@@ -1,6 +1,7 @@
 #include "rf_prompt.h"
 
 #include "rf_keys.h"
+#include "rf_exports.h"
 #include "rf_presets.h"
 #include "rf_recording.h"
 #include "rf_replay.h"
@@ -390,6 +391,36 @@ static void submit_prompt(struct rf_task *t)
 		if (n < 0)
 			n = 0;
 		rf_replay_seek_ms(t, (uint64_t)n);
+		rf_prompt_close(t);
+		return;
+	}
+	case RF_PROMPT_EXPORT_CSV: {
+		char exerr[128];
+		if (rf_exports_export_csv(t, s, exerr, sizeof(exerr)) != 0) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "export: %s", exerr[0] ? exerr : "failed");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		rf_prompt_close(t);
+		return;
+	}
+	case RF_PROMPT_EXPORT_PCAP: {
+		char exerr[128];
+		if (rf_exports_export_pcap(t, s, exerr, sizeof(exerr)) != 0) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "export: %s", exerr[0] ? exerr : "failed");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		rf_prompt_close(t);
+		return;
+	}
+	case RF_PROMPT_EXPORT_RFPKT: {
+		char exerr[128];
+		if (rf_exports_export_rfpkt(t, s, exerr, sizeof(exerr)) != 0) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "export: %s", exerr[0] ? exerr : "failed");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
 		rf_prompt_close(t);
 		return;
 	}
