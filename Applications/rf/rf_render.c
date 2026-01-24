@@ -2,6 +2,7 @@
 
 #include "rf_draw.h"
 #include "rf_layout.h"
+#include "rf_sniffer.h"
 #include "rf_task.h"
 #include "rf_waterfall.h"
 
@@ -190,6 +191,313 @@ static void render_panel(const struct rf_task *t, struct rf_rect r, const char *
 	rf_draw_text(t, (int16_t)(inner.x + 2 + RF_FONT_W), inner.y, title, fg, header, max_cols);
 }
 
+static void slider_ascii(char *out, unsigned outsz, int value, int min, int max, int width)
+{
+	if (!out || outsz == 0)
+		return;
+	if (width <= 0) {
+		snprintf(out, outsz, "[]");
+		return;
+	}
+	if (max <= min) {
+		unsigned n = 0;
+		if (n < outsz)
+			out[n++] = '[';
+		for (int i = 0; i < width && n + 1 < outsz; i++)
+			out[n++] = '-';
+		if (n < outsz)
+			out[n++] = ']';
+		if (n >= outsz)
+			n = outsz - 1;
+		out[n] = 0;
+		return;
+	}
+
+	value = rf_clamp_int(value, min, max);
+	int fill = (value - min) * width / (max - min);
+	fill = rf_clamp_int(fill, 0, width);
+
+	unsigned n = 0;
+	if (n < outsz)
+		out[n++] = '[';
+	for (int i = 0; i < width && n + 1 < outsz; i++)
+		out[n++] = (i < fill) ? '#' : '-';
+	if (n < outsz)
+		out[n++] = ']';
+	if (n >= outsz)
+		n = outsz - 1;
+	out[n] = 0;
+}
+
+static const char *checkbox_ascii(int on)
+{
+	return on ? "[x]" : "[ ]";
+}
+
+static void render_rf_control(const struct rf_task *t, struct rf_layout l)
+{
+	render_panel(t, l.rf, "RF Control", t->focus == RF_FOCUS_RFCONTROL);
+
+	struct rf_rect inner = rf_rect_inset(l.rf, 2, 2);
+	int max_cols = (int)(inner.w / RF_FONT_W);
+	if (max_cols <= 0)
+		return;
+
+	int16_t y = (int16_t)(inner.y + RF_FONT_H);
+
+	char preset[64];
+	snprintf(preset, sizeof(preset), "PRESET: (none)");
+	if (t->active_preset[0]) {
+		snprintf(preset, sizeof(preset), "PRESET: %s%s", t->active_preset, t->preset_dirty ? "*" : "");
+	}
+	rf_draw_text(t, (int16_t)(inner.x + 2), y, preset, rf_color_dim(), rf_color_panel_bg(), max_cols);
+	y = (int16_t)(y + RF_FONT_H);
+
+	char rec[96];
+	struct rf_color rec_color = rf_color_dim();
+	snprintf(rec, sizeof(rec), "REC: OFF");
+	if (t->record_err[0]) {
+		snprintf(rec, sizeof(rec), "REC: ERROR %s", t->record_err);
+		rec_color = rf_color_warn();
+	} else if (t->recording) {
+		snprintf(rec, sizeof(rec), "REC: ON  %s  %luKB  swp:%lu pkt:%lu", t->record_name,
+			 (unsigned long)(t->record_bytes / 1024u), (unsigned long)t->record_sweeps,
+			 (unsigned long)t->record_packets);
+		rec_color = rf_color_accent();
+	}
+	rf_draw_text(t, (int16_t)(inner.x + 2), y, rec, rec_color, rf_color_panel_bg(), max_cols);
+	y = (int16_t)(y + RF_FONT_H);
+
+	char dwell_slider[16];
+	char step_slider[16];
+	slider_ascii(dwell_slider, sizeof(dwell_slider), t->dwell_time_ms, 1, 50, 8);
+	slider_ascii(step_slider, sizeof(step_slider), rf_clamp_int(t->scan_speed_scalar, 1, 10), 1, 10, 8);
+
+	char lines[8][64];
+	snprintf(lines[0], sizeof(lines[0]), "LO    [%03d]", t->channel_range_lo);
+	snprintf(lines[1], sizeof(lines[1]), "HI    [%03d]", t->channel_range_hi);
+	snprintf(lines[2], sizeof(lines[2]), "DWELL %s %02dms", dwell_slider, t->dwell_time_ms);
+	snprintf(lines[3], sizeof(lines[3]), "STEP  %s %02d", step_slider, rf_clamp_int(t->scan_speed_scalar, 1, 10));
+	snprintf(lines[4], sizeof(lines[4]), "RATE  <%s>", rf_data_rate_str(t->data_rate));
+	snprintf(lines[5], sizeof(lines[5]), "CRC   <%s>", rf_crc_mode_str(t->crc_mode));
+	snprintf(lines[6], sizeof(lines[6]), "ACK   %s", checkbox_ascii(t->auto_ack));
+	snprintf(lines[7], sizeof(lines[7]), "PWR   <%s>", rf_power_level_str(t->power_level));
+
+	for (int i = 0; i < 8; i++) {
+		int16_t row_y = (int16_t)(y + (int16_t)i * RF_FONT_H);
+		if (row_y + RF_FONT_H > inner.y + inner.h)
+			return;
+		struct rf_color fg = rf_color_fg();
+		struct rf_color bg = rf_color_panel_bg();
+		if (i == t->selected_setting && t->focus == RF_FOCUS_RFCONTROL) {
+			fg = rf_color_sel_fg();
+			bg = rf_color_sel_bg();
+		}
+		rf_draw_fill_rect(t, (int16_t)(inner.x + 1), row_y, (int16_t)(inner.w - 2), RF_FONT_H, bg);
+		rf_draw_text(t, (int16_t)(inner.x + 2), row_y, lines[i], fg, bg, max_cols);
+	}
+}
+
+static void render_sniffer(struct rf_task *t, struct rf_layout l)
+{
+	render_panel(t, l.sniffer, "Packet Sniffer", t->focus == RF_FOCUS_SNIFFER);
+
+	struct rf_rect inner = rf_rect_inset(l.sniffer, 2, 2);
+	int max_cols = (int)(inner.w / RF_FONT_W);
+	if (max_cols <= 0)
+		return;
+
+	int16_t y0 = (int16_t)(inner.y + RF_FONT_H + 1);
+	const char *status = "LIVE";
+	if (t->replay_active) {
+		status = t->replay_playing ? "REPLAY/PLAY" : "REPLAY/PAUSE";
+	} else if (t->capture_paused) {
+		status = "PAUSED";
+	}
+	char filt[128];
+	rf_sniffer_filter_summary(t, filt, sizeof(filt));
+
+	char hdr[192];
+	snprintf(hdr, sizeof(hdr), "%s  pps:%d drop:%lu  %s", status, t->pkts_per_sec, (unsigned long)t->pkt_dropped, filt);
+	rf_draw_text(t, (int16_t)(inner.x + 2), y0, hdr, rf_color_fg(), rf_color_panel_bg(), max_cols);
+
+	rf_draw_text(t, (int16_t)(inner.x + 2), (int16_t)(y0 + RF_FONT_H), "t(ms) ch r ln addr   c", rf_color_dim(),
+		     rf_color_panel_bg(), max_cols);
+
+	int16_t list_y = (int16_t)(y0 + 2 * RF_FONT_H);
+	int list_rows = (int)((inner.h - 3 * RF_FONT_H - 1) / RF_FONT_H);
+	if (list_rows <= 0)
+		return;
+
+	int total = rf_sniffer_filtered_count(t);
+	if (total <= 0) {
+		rf_draw_text(t, (int16_t)(inner.x + 2), list_y, "(no packets)", rf_color_dim(), rf_color_panel_bg(), max_cols);
+		return;
+	}
+
+	if (t->sniffer_sel < 0)
+		t->sniffer_sel = 0;
+	if (t->sniffer_sel >= total) {
+		t->sniffer_sel = total - 1;
+		if (t->sniffer_sel < 0)
+			t->sniffer_sel = 0;
+	}
+
+	int max_top = total - list_rows;
+	if (max_top < 0)
+		max_top = 0;
+	if (t->sniffer_top < 0)
+		t->sniffer_top = 0;
+	if (t->sniffer_top > max_top)
+		t->sniffer_top = max_top;
+	if (t->sniffer_sel < t->sniffer_top)
+		t->sniffer_top = t->sniffer_sel;
+	if (t->sniffer_sel >= t->sniffer_top + list_rows) {
+		t->sniffer_top = t->sniffer_sel - list_rows + 1;
+		if (t->sniffer_top > max_top)
+			t->sniffer_top = max_top;
+	}
+
+	for (int row = 0; row < list_rows; row++) {
+		int idx = t->sniffer_top + row;
+		if (idx < 0 || idx >= total)
+			continue;
+
+		struct rf_packet_summary p;
+		if (!rf_sniffer_filtered_packet_summary_by_index(t, idx, &p))
+			continue;
+
+		int ts = (int)(p.tick % 10000u);
+		char r = rf_rate_short(p.rate);
+		char addr[7];
+		char crc[3];
+		rf_addr_suffix3(p.addr_len, p.addr, addr);
+		rf_crc_text(p.crc_len, p.crc_ok, crc);
+
+		char line[64];
+		snprintf(line, sizeof(line), "%04d %03d %c %02d %s %s", ts, p.channel, r, p.length, addr, crc);
+
+		int16_t y = (int16_t)(list_y + (int16_t)row * RF_FONT_H);
+		struct rf_color fg = rf_color_fg();
+		struct rf_color bg = rf_color_panel_bg();
+		if (idx == t->sniffer_sel && t->focus == RF_FOCUS_SNIFFER) {
+			fg = rf_color_sel_fg();
+			bg = rf_color_sel_bg();
+		}
+		rf_draw_fill_rect(t, (int16_t)(inner.x + 1), y, (int16_t)(inner.w - 2), RF_FONT_H, bg);
+		rf_draw_text(t, (int16_t)(inner.x + 2), y, line, fg, bg, max_cols);
+	}
+}
+
+static void hex_bytes(const uint8_t *b, int n, char *out, unsigned outsz)
+{
+	static const char digits[] = "0123456789ABCDEF";
+	if (!out || outsz == 0)
+		return;
+	out[0] = 0;
+	if (!b || n <= 0)
+		return;
+	unsigned w = 0;
+	for (int i = 0; i < n && w + 2 < outsz; i++) {
+		out[w++] = digits[(b[i] >> 4) & 0x0F];
+		out[w++] = digits[b[i] & 0x0F];
+	}
+	if (w >= outsz)
+		w = outsz - 1;
+	out[w] = 0;
+}
+
+static void render_hex_dump(const struct rf_task *t, struct rf_rect box, int16_t y, const uint8_t *data, int len,
+			    int max_cols)
+{
+	if (!t)
+		return;
+	if (!data || len <= 0) {
+		rf_draw_text(t, (int16_t)(box.x + 2), y, "(empty)", rf_color_dim(), rf_color_panel_bg(), max_cols);
+		return;
+	}
+	const int bytes_per_line = 8;
+	for (int off = 0; off < len; off += bytes_per_line) {
+		if (y + RF_FONT_H > box.y + box.h)
+			return;
+		int chunk_len = len - off;
+		if (chunk_len > bytes_per_line)
+			chunk_len = bytes_per_line;
+		char hex[32];
+		hex_bytes(data + off, chunk_len, hex, sizeof(hex));
+		char line[64];
+		snprintf(line, sizeof(line), "%02X: %s", off, hex);
+		rf_draw_text(t, (int16_t)(box.x + 2), y, line, rf_color_dim(), rf_color_panel_bg(), max_cols);
+		y = (int16_t)(y + RF_FONT_H);
+	}
+}
+
+static void render_protocol(struct rf_task *t, struct rf_layout l)
+{
+	render_panel(t, l.proto, "Protocol View", t->focus == RF_FOCUS_PROTOCOL);
+
+	struct rf_rect inner = rf_rect_inset(l.proto, 2, 2);
+	int max_cols = (int)(inner.w / RF_FONT_W);
+	if (max_cols <= 0)
+		return;
+
+	int16_t y0 = (int16_t)(inner.y + RF_FONT_H + 1);
+	const struct rf_packet *p = rf_sniffer_filtered_live_packet_by_index(t, t->sniffer_sel);
+	if (!p) {
+		char mode[32];
+		snprintf(mode, sizeof(mode), "mode:%s", rf_protocol_mode_str(t->proto_mode));
+		rf_draw_text(t, (int16_t)(inner.x + 2), y0, mode, rf_color_dim(), rf_color_panel_bg(), max_cols);
+		rf_draw_text(t, (int16_t)(inner.x + 2), (int16_t)(y0 + RF_FONT_H), "(select a packet)", rf_color_dim(),
+			     rf_color_panel_bg(), max_cols);
+		return;
+	}
+
+	char crc[3];
+	rf_crc_text(p->crc_len, p->crc_ok, crc);
+	char h1[64];
+	char h2[64];
+	snprintf(h1, sizeof(h1), "mode:%s  #%lu  ch:%03d  t:%04d", rf_protocol_mode_str(t->proto_mode),
+		 (unsigned long)p->seq, p->channel, (int)(p->tick % 10000u));
+	snprintf(h2, sizeof(h2), "rate:%s len:%02d crc:%s addr:%dB", rf_data_rate_str(p->rate), p->length, crc,
+		 p->addr_len);
+
+	rf_draw_text(t, (int16_t)(inner.x + 2), y0, h1, rf_color_fg(), rf_color_panel_bg(), max_cols);
+	rf_draw_text(t, (int16_t)(inner.x + 2), (int16_t)(y0 + RF_FONT_H), h2, rf_color_dim(), rf_color_panel_bg(), max_cols);
+
+	int16_t y = (int16_t)(y0 + 2 * RF_FONT_H);
+	if (y + RF_FONT_H > inner.y + inner.h)
+		return;
+
+	if (t->proto_mode == RF_PROTO_RAW) {
+		uint8_t raw[1 + 5 + 32 + 2];
+		int n = 0;
+		raw[n++] = 0x55;
+		for (int i = 0; i < p->addr_len && i < 5; i++)
+			raw[n++] = p->addr[i];
+		for (int i = 0; i < p->length && i < 32; i++)
+			raw[n++] = p->payload[i];
+		for (int i = 0; i < p->crc_len && i < 2; i++)
+			raw[n++] = p->crc[i];
+		render_hex_dump(t, inner, y, raw, n, max_cols);
+		return;
+	}
+
+	char addr_line[64];
+	snprintf(addr_line, sizeof(addr_line), "pre:55 addr:%02X%02X%02X%02X%02X", p->addr[0], p->addr[1], p->addr[2],
+		 p->addr[3], p->addr[4]);
+	rf_draw_text(t, (int16_t)(inner.x + 2), y, addr_line, rf_color_fg(), rf_color_panel_bg(), max_cols);
+	y = (int16_t)(y + RF_FONT_H);
+
+	if (p->crc_len > 0) {
+		char crc_line[32];
+		snprintf(crc_line, sizeof(crc_line), "crc:%s %02X%02X", crc, p->crc[0], p->crc[1]);
+		rf_draw_text(t, (int16_t)(inner.x + 2), y, crc_line, rf_color_fg(), rf_color_panel_bg(), max_cols);
+		y = (int16_t)(y + RF_FONT_H);
+	}
+
+	render_hex_dump(t, inner, y, p->payload, p->length, max_cols);
+}
+
 static void render_spectrum(const struct rf_task *t, struct rf_layout l)
 {
 	render_panel(t, l.spectrum, "Spectrum", t->focus == RF_FOCUS_SPECTRUM);
@@ -291,9 +599,9 @@ static void render_waterfall(struct rf_task *t, struct rf_layout l)
 static void render_placeholders(const struct rf_task *t, struct rf_layout l)
 {
 	/* Left column is fully rendered. */
-	render_panel(t, l.rf, "RF Control", t->focus == RF_FOCUS_RFCONTROL);
-	render_panel(t, l.sniffer, "Packet Sniffer", t->focus == RF_FOCUS_SNIFFER);
-	render_panel(t, l.proto, "Protocol View", t->focus == RF_FOCUS_PROTOCOL);
+	render_rf_control(t, l);
+	render_sniffer((struct rf_task *)t, l);
+	render_protocol((struct rf_task *)t, l);
 	render_panel(t, l.analysis, "Analysis", t->focus == RF_FOCUS_ANALYSIS);
 }
 
