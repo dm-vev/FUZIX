@@ -1,5 +1,6 @@
 #include "rf_scan.h"
 
+#include "rf_recording.h"
 #include "rf_task.h"
 #include "rf_sniffer.h"
 #include "rf_waterfall.h"
@@ -93,6 +94,8 @@ static void on_sweep_complete(struct rf_task *t, uint64_t now)
 		if (t->energy_avg[i] > 0 && (t->scan_speed_scalar > 1))
 			t->energy_avg[i]--;
 	}
+
+	rf_recording_record_sweep(t, now);
 
 	if (t->waterfall_frozen)
 		return;
