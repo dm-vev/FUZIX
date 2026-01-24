@@ -8,10 +8,6 @@
 
 enum { RF_FONT_W = 6, RF_FONT_H = 8 };
 
-struct rf_color {
-	uint8_t r, g, b;
-};
-
 struct rf_color rf_color_bg(void);
 struct rf_color rf_color_panel_bg(void);
 struct rf_color rf_color_header_bg(void);
@@ -26,4 +22,3 @@ void rf_draw_status(const struct rf_task *t);
 void rf_draw_present(const struct rf_task *t);
 
 #endif
-

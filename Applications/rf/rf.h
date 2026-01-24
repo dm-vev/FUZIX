@@ -6,6 +6,12 @@
 
 /* Shared definitions for the rf analyzer application. */
 
+struct rf_color {
+	uint8_t r;
+	uint8_t g;
+	uint8_t b;
+};
+
 /* Header/footer rows match Spark rfanalyzer. */
 enum {
 	RF_HEADER_ROWS = 2,

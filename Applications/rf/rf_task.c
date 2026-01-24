@@ -2,11 +2,13 @@
 
 #include "rf_draw.h"
 #include "rf_keys.h"
+#include "rf_layout.h"
 #include "rf_term.h"
 
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -39,6 +41,20 @@ int rf_task_init(struct rf_task *t, int fb_mode, char *err, size_t errsz)
 	t->active = 1;
 	t->focus = RF_FOCUS_SPECTRUM;
 	t->dirty = RF_DIRTY_ALL;
+
+	/* Spark defaults (task.go New()). */
+	t->selected_channel = 37;
+	t->channel_range_lo = 0;
+	t->channel_range_hi = RF_MAX_CHANNEL;
+	t->dwell_time_ms = 5;
+	t->scan_speed_scalar = 1;
+	t->data_rate = RF_RATE_2M;
+	t->crc_mode = RF_CRC_2B;
+	t->auto_ack = 0;
+	t->power_level = RF_PWR_MAX;
+	t->wf_palette = RF_WF_PAL_CYAN;
+	t->rng = 0xA341316Cu;
+	t->replay_speed = 1;
 
 	if (rf_fb_open(&t->fb, fb_mode, err, errsz) != 0)
 		return -1;
@@ -83,9 +99,6 @@ int rf_task_run(struct rf_task *t)
 	rf_draw_present(t);
 	t->dirty = 0;
 
-	uint8_t inbuf[128];
-	size_t inlen = 0;
-
 	t->now_tick = now_ms();
 	t->next_render_tick = t->now_tick;
 
@@ -93,21 +106,23 @@ int rf_task_run(struct rf_task *t)
 		uint8_t tmp[32];
 		ssize_t n = read(0, tmp, sizeof(tmp));
 		if (n > 0) {
-			if (inlen + (size_t)n > sizeof(inbuf))
-				inlen = 0;
-			memcpy(inbuf + inlen, tmp, (size_t)n);
-			inlen += (size_t)n;
+			if (t->inlen + (size_t)n > sizeof(t->inbuf))
+				t->inlen = 0;
+			memcpy(t->inbuf + t->inlen, tmp, (size_t)n);
+			t->inlen += (size_t)n;
 		}
 
 		for (;;) {
 			struct rf_key k;
 			size_t consumed = 0;
-			if (!rf_next_key(inbuf, inlen, &consumed, &k))
+			if (!rf_next_key(t->inbuf, t->inlen, &consumed, &k))
 				break;
-			if (consumed == 0 || consumed > inlen)
+			if (consumed == 0 || consumed > t->inlen)
 				break;
-			memmove(inbuf, inbuf + consumed, inlen - consumed);
-			inlen -= consumed;
+			memmove(t->inbuf, t->inbuf + consumed, t->inlen - consumed);
+			t->inlen -= consumed;
+
+			/* TODO: replace with full Spark key handling. */
 			if (k.kind == RF_KEY_RUNE && (k.r == 'q' || k.r == 'Q'))
 				rf_running = 0;
 			t->dirty |= RF_DIRTY_STATUS;
@@ -124,7 +139,7 @@ int rf_task_run(struct rf_task *t)
 			t->next_render_tick = tick + 33;
 		}
 
-		if (inlen == 0)
+		if (t->inlen == 0)
 			usleep(10000);
 	}
 
@@ -136,6 +151,12 @@ void rf_task_destroy(struct rf_task *t)
 	if (!t)
 		return;
 	rf_term_restore_stdin();
+	free(t->wf_buf);
+	t->wf_buf = NULL;
+	t->wf_cap = 0;
+	free(t->record_buf);
+	t->record_buf = NULL;
+	t->record_cap = 0;
+	t->record_len = 0;
 	rf_fb_close(&t->fb);
 }
-

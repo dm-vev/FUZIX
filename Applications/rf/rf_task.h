@@ -3,9 +3,12 @@
 
 #include "rf.h"
 #include "rf_fb.h"
+#include "rf_types.h"
 
 #include <stdint.h>
 #include <stddef.h>
+
+struct rf_session;
 
 enum rf_focus_panel {
 	RF_FOCUS_SPECTRUM = 0,
@@ -39,10 +42,70 @@ struct rf_task {
 	int active;
 	enum rf_focus_panel focus;
 
+	uint8_t inbuf[256];
+	size_t inlen;
+
 	uint64_t now_tick;
 	uint64_t next_render_tick;
 
-	/* TODO: port full Spark state machine incrementally. */
+	int scan_active;
+	int waterfall_frozen;
+	int capture_paused;
+	int selected_channel;
+	int channel_range_lo;
+	int channel_range_hi;
+	int dwell_time_ms;
+	int scan_speed_scalar;
+	enum rf_data_rate data_rate;
+	enum rf_crc_mode crc_mode;
+	int auto_ack;
+	enum rf_power_level power_level;
+	int selected_setting;
+
+	int scan_chan;
+	uint64_t scan_next_tick;
+	uint64_t sweep_count;
+	uint64_t last_sweep_tick;
+
+	uint8_t energy_cur[RF_NUM_CHANNELS];
+	uint8_t energy_avg[RF_NUM_CHANNELS];
+	uint8_t energy_peak[RF_NUM_CHANNELS];
+
+	enum rf_wf_palette wf_palette;
+	struct rf_color wf_palette888[256];
+	int wf_w;
+	int wf_h;
+	int wf_head;
+	uint8_t *wf_buf;
+	size_t wf_cap;
+
+	char active_preset[32];
+	int preset_dirty;
+
+	int recording;
+	char record_name[32];
+	char record_path[64];
+	uint8_t *record_buf;
+	size_t record_len;
+	size_t record_cap;
+	uint64_t record_next_flush_tick;
+	uint32_t record_sweeps;
+	uint32_t record_packets;
+	uint32_t record_bytes;
+	char record_err[64];
+
+	int replay_active;
+	int replay_playing;
+	int replay_speed;
+	uint64_t replay_host_last_tick;
+	uint64_t replay_now_tick;
+	int replay_sweep_idx;
+	int replay_pkt_limit;
+	int replay_cfg_idx;
+	struct rf_session *replay;
+	char replay_err[64];
+
+	uint32_t rng;
 };
 
 int rf_task_init(struct rf_task *t, int fb_mode, char *err, size_t errsz);
@@ -50,4 +113,3 @@ int rf_task_run(struct rf_task *t);
 void rf_task_destroy(struct rf_task *t);
 
 #endif
-
