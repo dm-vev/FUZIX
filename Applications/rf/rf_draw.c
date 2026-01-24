@@ -23,9 +23,16 @@ struct rf_color rf_color_status_bg(void) { return (struct rf_color){0x16, 0x16, 
 struct rf_color rf_color_border(void) { return (struct rf_color){0x2E, 0x2E, 0x2E}; }
 struct rf_color rf_color_fg(void) { return (struct rf_color){0xEE, 0xEE, 0xEE}; }
 struct rf_color rf_color_dim(void) { return (struct rf_color){0x8A, 0x8A, 0x8A}; }
+struct rf_color rf_color_accent(void) { return (struct rf_color){0x4A, 0xD1, 0xFF}; }
+struct rf_color rf_color_warn(void) { return (struct rf_color){0xFF, 0xD1, 0x4A}; }
+struct rf_color rf_color_sel_bg(void) { return (struct rf_color){0xE8, 0xE8, 0xE8}; }
+struct rf_color rf_color_sel_fg(void) { return (struct rf_color){0x11, 0x11, 0x11}; }
+struct rf_color rf_color_focus_mark(void) { return (struct rf_color){0x20, 0xA0, 0xFF}; }
+struct rf_color rf_color_menu_bg(void) { return (struct rf_color){0x1A, 0x3D, 0x7A}; }
+struct rf_color rf_color_menu_fg(void) { return (struct rf_color){0xFF, 0xFF, 0xFF}; }
 
-static int draw_text_box(struct rf_fb *fb, uint16_t x, uint16_t y, const char *utf8,
-			 struct rf_color fg, struct rf_color bg, int cols)
+static int rf_draw_text_box(struct rf_fb *fb, uint16_t x, uint16_t y, const char *utf8,
+			    struct rf_color fg, struct rf_color bg, int cols)
 {
 	if (!fb || fb->fd < 0 || !fb->active)
 		return -1;
@@ -38,20 +45,22 @@ static int draw_text_box(struct rf_fb *fb, uint16_t x, uint16_t y, const char *u
 		return -1;
 
 	/* Fill background + draw glyphs line-by-line for cache locality. */
+	const uint8_t *src = (const uint8_t *)(utf8 ? utf8 : "");
+	size_t srclen = utf8 ? strlen(utf8) : 0;
 	for (int py = 0; py < RF_FONT_H; py++) {
 		uint8_t *dst = payload + (size_t)py * (size_t)w * 3;
 
 		/* Write glyphs sequentially. */
-		const char *p = utf8 ? utf8 : "";
 		int cx = 0;
 		while (cx < cols) {
 			uint32_t r = 0;
 			size_t rsz = 0;
-			if (*p) {
-				rsz = rf_utf8_decode((const uint8_t *)p, strlen(p), &r);
+			if (srclen) {
+				rsz = rf_utf8_decode(src, srclen, &r);
 				if (rsz == 0)
 					break;
-				p += rsz;
+				src += rsz;
+				srclen -= rsz;
 			} else {
 				r = ' ';
 			}
@@ -64,7 +73,7 @@ static int draw_text_box(struct rf_fb *fb, uint16_t x, uint16_t y, const char *u
 			}
 
 			cx++;
-			if (!*p && cx < cols) {
+			if (!srclen && cx < cols) {
 				/* pad with spaces quickly */
 				for (; cx < cols; cx++) {
 					uint8_t g2 = rf_font6x8_cp1251_row(' ', (uint8_t)py);
@@ -125,43 +134,73 @@ void rf_draw_clear(const struct rf_task *t, struct rf_color c)
 	}
 }
 
-void rf_draw_header(const struct rf_task *t)
+void rf_draw_fill_rect(const struct rf_task *t, int16_t x, int16_t y, int16_t w, int16_t h, struct rf_color c)
 {
 	if (!t)
 		return;
+	if (w <= 0 || h <= 0)
+		return;
 
-	struct rf_color fg = rf_color_fg();
-	struct rf_color dim = rf_color_dim();
-	struct rf_color header = rf_color_header_bg();
+	int x0 = x;
+	int y0 = y;
+	int x1 = x + w;
+	int y1 = y + h;
+	if (x0 < 0)
+		x0 = 0;
+	if (y0 < 0)
+		y0 = 0;
+	if (x1 > (int)t->fb.disp.width)
+		x1 = (int)t->fb.disp.width;
+	if (y1 > (int)t->fb.disp.height)
+		y1 = (int)t->fb.disp.height;
+	int cw = x1 - x0;
+	int ch_total = y1 - y0;
+	if (cw <= 0 || ch_total <= 0)
+		return;
 
-	/* Menu bar row. */
-	fill_rect_chunk((struct rf_fb *)&t->fb, 0, 0, (int)t->fb.disp.width, RF_FONT_H, header);
-	draw_text_box((struct rf_fb *)&t->fb, 2, 0, "View RF Capture Decode Display Advanced Help", fg, header, t->cols);
-
-	/* Toolbar row. */
-	fill_rect_chunk((struct rf_fb *)&t->fb, 0, RF_FONT_H, (int)t->fb.disp.width, RF_FONT_H, header);
-	draw_text_box((struct rf_fb *)&t->fb, 2, RF_FONT_H,
-		      "2.4GHz RF Analyzer  nRF24 scan+spectrum+waterfall+sniffer", dim, header, t->cols);
+	const int chunk_h = 16;
+	for (int oy = 0; oy < ch_total; oy += chunk_h) {
+		int ch = ch_total - oy;
+		if (ch > chunk_h)
+			ch = chunk_h;
+		fill_rect_chunk((struct rf_fb *)&t->fb, x0, y0 + oy, cw, ch, c);
+	}
 }
 
-void rf_draw_status(const struct rf_task *t)
+void rf_draw_text(const struct rf_task *t, int16_t x, int16_t y, const char *utf8, struct rf_color fg,
+		  struct rf_color bg, int cols)
 {
 	if (!t)
 		return;
+	if (cols <= 0)
+		return;
 
-	struct rf_color fg = rf_color_fg();
-	struct rf_color dim = rf_color_dim();
-	struct rf_color bg = rf_color_status_bg();
+	int fb_w = (int)t->fb.disp.width;
+	int max_cols = fb_w / RF_FONT_W;
+	if (cols > max_cols)
+		cols = max_cols;
 
-	int y0 = (t->rows - RF_STATUS_ROWS) * RF_FONT_H;
-	fill_rect_chunk((struct rf_fb *)&t->fb, 0, y0, (int)t->fb.disp.width, RF_FONT_H, bg);
-	fill_rect_chunk((struct rf_fb *)&t->fb, 0, y0 + RF_FONT_H, (int)t->fb.disp.width, RF_FONT_H, bg);
+	if (x < 0) {
+		int skip = (-x) / RF_FONT_W;
+		if (skip >= cols)
+			return;
+		cols -= skip;
+		x = 0;
+	}
+	if (y < 0)
+		return;
+	if (y + RF_FONT_H > (int)t->fb.disp.height)
+		return;
 
-	char line1[96];
-	snprintf(line1, sizeof(line1), "mode: (stub)  tick:%lu", (unsigned long)t->now_tick);
-	draw_text_box((struct rf_fb *)&t->fb, 2, (uint16_t)y0, line1, fg, bg, t->cols);
-	draw_text_box((struct rf_fb *)&t->fb, 2, (uint16_t)(y0 + RF_FONT_H),
-		      "keys: m menu  h help  q quit", dim, bg, t->cols);
+	if (x >= fb_w)
+		return;
+	int avail_cols = (fb_w - x) / RF_FONT_W;
+	if (avail_cols <= 0)
+		return;
+	if (cols > avail_cols)
+		cols = avail_cols;
+
+	(void)rf_draw_text_box((struct rf_fb *)&t->fb, (uint16_t)x, (uint16_t)y, utf8, fg, bg, cols);
 }
 
 void rf_draw_present(const struct rf_task *t)
@@ -171,4 +210,3 @@ void rf_draw_present(const struct rf_task *t)
 	if (t->fb.mode == RF_FB_MODE_MEMORY)
 		(void)rf_fb_flush((struct rf_fb *)&t->fb, NULL);
 }
-

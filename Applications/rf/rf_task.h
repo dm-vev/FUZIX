@@ -94,6 +94,10 @@ struct rf_task {
 	uint32_t record_bytes;
 	char record_err[64];
 
+	int show_menu;
+	enum rf_menu_category menu_cat;
+	int menu_sel;
+
 	int replay_active;
 	int replay_playing;
 	int replay_speed;

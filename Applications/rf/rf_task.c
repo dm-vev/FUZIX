@@ -3,6 +3,7 @@
 #include "rf_draw.h"
 #include "rf_keys.h"
 #include "rf_layout.h"
+#include "rf_render.h"
 #include "rf_term.h"
 
 #include <errno.h>
@@ -55,6 +56,7 @@ int rf_task_init(struct rf_task *t, int fb_mode, char *err, size_t errsz)
 	t->wf_palette = RF_WF_PAL_CYAN;
 	t->rng = 0xA341316Cu;
 	t->replay_speed = 1;
+	t->menu_cat = RF_MENU_RF;
 
 	if (rf_fb_open(&t->fb, fb_mode, err, errsz) != 0)
 		return -1;
@@ -92,15 +94,12 @@ int rf_task_run(struct rf_task *t)
 	if (!t)
 		return 1;
 
-	/* Initial frame. */
-	rf_draw_clear(t, rf_color_bg());
-	rf_draw_header(t);
-	rf_draw_status(t);
-	rf_draw_present(t);
-	t->dirty = 0;
-
 	t->now_tick = now_ms();
 	t->next_render_tick = t->now_tick;
+
+	/* Initial frame. */
+	t->dirty = RF_DIRTY_ALL;
+	rf_render_dirty(t);
 
 	while (rf_running) {
 		uint8_t tmp[32];
@@ -132,11 +131,8 @@ int rf_task_run(struct rf_task *t)
 		t->now_tick = tick;
 
 		if (t->dirty && tick >= t->next_render_tick) {
-			rf_draw_header(t);
-			rf_draw_status(t);
-			rf_draw_present(t);
-			t->dirty = 0;
-			t->next_render_tick = tick + 33;
+			rf_render_dirty(t);
+			t->next_render_tick = tick + RF_RENDER_INTERVAL_TICKS;
 		}
 
 		if (t->inlen == 0)

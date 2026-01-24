@@ -11,6 +11,7 @@ SRCS = \
 	rf_draw.c \
 	rf_font6x8cp1251.c \
 	rf_layout.c \
+	rf_render.c \
 	rf_keys.c \
 	rf_utf8.c \
 	rf_cp1251.c \
