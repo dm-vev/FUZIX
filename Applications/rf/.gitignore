@@ -1,0 +1,12 @@
+rf
+*.o
+*.bin
+*.data
+*.text
+*.debug
+*.map
+*.sym
+*.lst
+size.report
+core
+*~
