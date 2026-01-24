@@ -1,7 +1,9 @@
 #include "rf_render.h"
 
 #include "rf_draw.h"
+#include "rf_filters.h"
 #include "rf_layout.h"
+#include "rf_menu.h"
 #include "rf_sniffer.h"
 #include "rf_task.h"
 #include "rf_waterfall.h"
@@ -94,6 +96,357 @@ static void render_header(const struct rf_task *t, struct rf_layout l)
 
 	const char *title = "2.4GHz RF Analyzer  nRF24 scan+spectrum+waterfall+sniffer";
 	rf_draw_text(t, (int16_t)(l.toolbar.x + 2), l.toolbar.y, title, dim, header_bg, t->cols);
+}
+
+static void render_prompt_overlay(const struct rf_task *t)
+{
+	if (!t)
+		return;
+
+	int box_cols = t->cols - 6;
+	if (box_cols > 54)
+		box_cols = 54;
+	const int box_rows = 10;
+
+	int16_t px = (int16_t)(3 * RF_FONT_W);
+	int16_t py = (int16_t)((RF_HEADER_ROWS + 3) * RF_FONT_H);
+	int16_t pw = (int16_t)(box_cols * RF_FONT_W);
+	int16_t ph = (int16_t)(box_rows * RF_FONT_H);
+
+	struct rf_color border = rf_color_border();
+	struct rf_color panel = rf_color_panel_bg();
+	struct rf_color header = rf_color_header_bg();
+	struct rf_color fg = rf_color_fg();
+	struct rf_color accent = rf_color_accent();
+	struct rf_color warn = rf_color_warn();
+
+	rf_draw_fill_rect(t, px, py, pw, ph, border);
+	rf_draw_fill_rect(t, (int16_t)(px + 1), (int16_t)(py + 1), (int16_t)(pw - 2), (int16_t)(ph - 2), panel);
+	rf_draw_fill_rect(t, (int16_t)(px + 1), (int16_t)(py + 1), (int16_t)(pw - 2), (int16_t)(RF_FONT_H + 1), header);
+
+	const char *title = t->prompt_title[0] ? t->prompt_title : "Input";
+	char title_line[96];
+	snprintf(title_line, sizeof(title_line), "%s  (Enter apply, Esc cancel)", title);
+	rf_draw_text(t, (int16_t)(px + 2), (int16_t)(py + 1), title_line, fg, header, box_cols);
+
+	int16_t field_y = (int16_t)(py + 2 * RF_FONT_H + 2);
+	rf_draw_fill_rect(t, (int16_t)(px + 2), field_y, (int16_t)(pw - 4), (int16_t)(RF_FONT_H + 2), header);
+
+	char text[64];
+	unsigned n = 0;
+	for (int i = 0; i < t->prompt_len && n + 1 < sizeof(text); i++) {
+		uint32_t r = t->prompt_buf[i];
+		if (r < 0x20 || r > 0x7e)
+			r = '?';
+		text[n++] = (char)r;
+	}
+	text[n] = 0;
+	rf_draw_text(t, (int16_t)(px + 4), (int16_t)(field_y + 1), text, fg, header, box_cols - 2);
+
+	int cursor = t->prompt_cursor;
+	if (cursor < 0)
+		cursor = 0;
+	if (cursor > t->prompt_len)
+		cursor = t->prompt_len;
+	int16_t cx = (int16_t)(px + 4 + cursor * RF_FONT_W);
+	rf_draw_fill_rect(t, cx, (int16_t)(field_y + 1), 1, RF_FONT_H, accent);
+
+	if (t->prompt_err[0]) {
+		int16_t err_y = (int16_t)(field_y + 2 * RF_FONT_H);
+		char err_line[96];
+		snprintf(err_line, sizeof(err_line), "ERR: %s", t->prompt_err);
+		rf_draw_text(t, (int16_t)(px + 2), err_y, err_line, warn, panel, box_cols);
+	}
+}
+
+static void render_help_overlay(const struct rf_task *t)
+{
+	if (!t)
+		return;
+
+	int box_cols = t->cols - 6;
+	if (box_cols > 54)
+		box_cols = 54;
+	const int box_rows = 16;
+
+	int16_t px = (int16_t)(3 * RF_FONT_W);
+	int16_t py = (int16_t)((RF_HEADER_ROWS + 2) * RF_FONT_H);
+	int16_t pw = (int16_t)(box_cols * RF_FONT_W);
+	int16_t ph = (int16_t)(box_rows * RF_FONT_H);
+
+	struct rf_color border = rf_color_border();
+	struct rf_color panel = rf_color_panel_bg();
+	struct rf_color header = rf_color_header_bg();
+	struct rf_color fg = rf_color_fg();
+	struct rf_color dim = rf_color_dim();
+
+	rf_draw_fill_rect(t, px, py, pw, ph, border);
+	rf_draw_fill_rect(t, (int16_t)(px + 1), (int16_t)(py + 1), (int16_t)(pw - 2), (int16_t)(ph - 2), panel);
+	rf_draw_fill_rect(t, (int16_t)(px + 1), (int16_t)(py + 1), (int16_t)(pw - 2), (int16_t)(RF_FONT_H + 1), header);
+	rf_draw_text(t, (int16_t)(px + 2), (int16_t)(py + 1), "Help  (h/Esc close)", fg, header, box_cols);
+
+	static const char *const lines[] = {
+		"s start/stop scan",
+		"w freeze/resume waterfall",
+		"p pause/resume packet capture",
+		"r reset view",
+		"m open menu",
+		"t cycle focus",
+		"c change channel",
+		"f filters",
+		"q quit",
+		"",
+		"Arrows: adjust focused panel",
+	};
+
+	for (unsigned i = 0; i < sizeof(lines) / sizeof(lines[0]); i++) {
+		int16_t y = (int16_t)(py + 2 * RF_FONT_H + 2 + (int16_t)i * RF_FONT_H);
+		struct rf_color line_fg = lines[i][0] ? dim : border;
+		rf_draw_text(t, (int16_t)(px + 2), y, lines[i], line_fg, panel, box_cols);
+	}
+}
+
+static void hex_mask_string(char *out, unsigned outsz, const uint8_t *val, const uint8_t *mask, int len)
+{
+	if (!out || outsz == 0)
+		return;
+	out[0] = 0;
+	if (!val || !mask || len <= 0)
+		return;
+
+	unsigned n = 0;
+	for (int i = 0; i < len && n + 2 < outsz; i++) {
+		char hi = '?';
+		char lo = '?';
+		if ((mask[i] & 0xF0) != 0) {
+			uint8_t v = (val[i] >> 4) & 0x0F;
+			hi = (char)((v < 10) ? ('0' + v) : ('A' + (v - 10)));
+		}
+		if ((mask[i] & 0x0F) != 0) {
+			uint8_t v = val[i] & 0x0F;
+			lo = (char)((v < 10) ? ('0' + v) : ('A' + (v - 10)));
+		}
+		out[n++] = hi;
+		out[n++] = lo;
+	}
+	if (n >= outsz)
+		n = outsz - 1;
+	out[n] = 0;
+}
+
+static void render_filters_overlay(const struct rf_task *t, struct rf_layout l)
+{
+	if (!t)
+		return;
+
+	enum { filter_lines = 8 };
+
+	int box_cols = l.right_main_cols;
+	if (box_cols < 20)
+		box_cols = 20;
+	const int box_rows = 3 + filter_lines;
+
+	int16_t px = (int16_t)(l.sniffer.x + 2);
+	int16_t py = (int16_t)(l.sniffer.y + RF_FONT_H * 2);
+	int16_t pw = (int16_t)(box_cols * RF_FONT_W);
+	int16_t ph = (int16_t)(box_rows * RF_FONT_H);
+
+	struct rf_color border = rf_color_border();
+	struct rf_color panel = rf_color_panel_bg();
+	struct rf_color header = rf_color_header_bg();
+	struct rf_color fg = rf_color_fg();
+	struct rf_color dim = rf_color_dim();
+	struct rf_color sel_bg = rf_color_sel_bg();
+	struct rf_color sel_fg = rf_color_sel_fg();
+
+	rf_draw_fill_rect(t, px, py, pw, ph, border);
+	rf_draw_fill_rect(t, (int16_t)(px + 1), (int16_t)(py + 1), (int16_t)(pw - 2), (int16_t)(ph - 2), panel);
+	rf_draw_fill_rect(t, (int16_t)(px + 1), (int16_t)(py + 1), (int16_t)(pw - 2), (int16_t)(RF_FONT_H + 1), header);
+	rf_draw_text(t, (int16_t)(px + 2), (int16_t)(py + 1), "Filters (Esc/f close)", fg, header, box_cols);
+	rf_draw_text(t, (int16_t)(px + 2), (int16_t)(py + RF_FONT_H + 2), "Up/Down sel  Left/Right adj  Enter edit", dim,
+		     panel, box_cols);
+
+	char lines[filter_lines][64];
+	memset(lines, 0, sizeof(lines));
+
+	snprintf(lines[0], sizeof(lines[0]), "CRC    <%s>", rf_filter_crc_str(t->filter_crc));
+
+	snprintf(lines[1], sizeof(lines[1]), "CH     <%s>", rf_filter_channel_str(t->filter_channel));
+	if (t->filter_channel == RF_FILTER_CH_SELECTED) {
+		snprintf(lines[1] + strlen(lines[1]), sizeof(lines[1]) - strlen(lines[1]), "  ch=%03d", t->selected_channel);
+	} else if (t->filter_channel == RF_FILTER_CH_RANGE) {
+		snprintf(lines[1] + strlen(lines[1]), sizeof(lines[1]) - strlen(lines[1]), "  %03d-%03d", t->channel_range_lo,
+			 t->channel_range_hi);
+	}
+
+	snprintf(lines[2], sizeof(lines[2]), "MINLEN [%02d]", rf_clamp_int(t->filter_min_len, 0, 32));
+	if (t->filter_max_len > 0)
+		snprintf(lines[3], sizeof(lines[3]), "MAXLEN [%02d]", rf_clamp_int(t->filter_max_len, 0, 32));
+	else
+		snprintf(lines[3], sizeof(lines[3]), "MAXLEN [--]");
+
+	char addr[16];
+	if (t->filter_addr_len > 0) {
+		hex_mask_string(addr, sizeof(addr), t->filter_addr, t->filter_addr_mask, t->filter_addr_len);
+		snprintf(lines[4], sizeof(lines[4]), "ADDR   <%s>", addr);
+	} else {
+		snprintf(lines[4], sizeof(lines[4]), "ADDR   <(none)>");
+	}
+
+	char pay[32];
+	if (t->filter_payload_len > 0) {
+		hex_mask_string(pay, sizeof(pay), t->filter_payload, t->filter_payload_mask, t->filter_payload_len);
+		snprintf(lines[5], sizeof(lines[5]), "PAY    <%s>", pay);
+	} else {
+		snprintf(lines[5], sizeof(lines[5]), "PAY    <(none)>");
+	}
+
+	if (t->filter_age_ms > 0)
+		snprintf(lines[6], sizeof(lines[6]), "AGEms  [%d]", t->filter_age_ms);
+	else
+		snprintf(lines[6], sizeof(lines[6]), "AGEms  [off]");
+
+	if (t->filter_burst_max_ms > 0)
+		snprintf(lines[7], sizeof(lines[7]), "BURSTΔ [%d]", t->filter_burst_max_ms);
+	else
+		snprintf(lines[7], sizeof(lines[7]), "BURSTΔ [off]");
+
+	int16_t y0 = (int16_t)(py + 2 * RF_FONT_H + 2);
+	int sel = t->filter_sel;
+	if (sel < 0)
+		sel = 0;
+	if (sel >= filter_lines)
+		sel = filter_lines - 1;
+	for (int i = 0; i < filter_lines; i++) {
+		int16_t y = (int16_t)(y0 + (int16_t)i * RF_FONT_H);
+		struct rf_color line_fg = fg;
+		struct rf_color line_bg = panel;
+		if (i == sel) {
+			line_fg = sel_fg;
+			line_bg = sel_bg;
+		}
+		rf_draw_fill_rect(t, (int16_t)(px + 1), y, (int16_t)(pw - 2), RF_FONT_H, line_bg);
+		rf_draw_text(t, (int16_t)(px + 2), y, lines[i], line_fg, line_bg, box_cols);
+	}
+}
+
+static void render_menu_overlay(const struct rf_task *t, struct rf_layout l)
+{
+	if (!t)
+		return;
+
+	int count = 0;
+	const struct rf_menu_item *items = rf_menu_items(t->menu_cat, &count);
+	if (!items || count <= 0)
+		return;
+
+	struct rf_menu_bar_seg segs[7];
+	struct rf_menu_bar_seg anchor = {.cat = t->menu_cat, .x = (int16_t)(l.menu.x + 2), .w = (int16_t)(12 * RF_FONT_W)};
+	int seg_n = menu_bar_segments(t, l, segs);
+	for (int i = 0; i < seg_n; i++) {
+		if (segs[i].cat == t->menu_cat) {
+			anchor = segs[i];
+			break;
+		}
+	}
+
+	int max_line_cols = 18;
+	for (int i = 0; i < count; i++) {
+		char line[96];
+		rf_menu_item_line(t, items[i], line, sizeof(line));
+		int cols = (int)strlen(line);
+		if (cols > max_line_cols)
+			max_line_cols = cols;
+	}
+	if (max_line_cols < 18)
+		max_line_cols = 18;
+	if (max_line_cols > t->cols - 2)
+		max_line_cols = t->cols - 2;
+
+	int16_t pw = (int16_t)(max_line_cols * RF_FONT_W + 4);
+	int16_t ph = (int16_t)(count * RF_FONT_H + 2);
+	int16_t px = anchor.x;
+	int16_t py = (int16_t)(l.menu.y + l.menu.h);
+
+	int16_t screen_w = (int16_t)t->fb.disp.width;
+	int16_t screen_h = (int16_t)t->fb.disp.height;
+	int16_t status_h = (int16_t)(RF_STATUS_ROWS * RF_FONT_H);
+
+	if (px + pw > screen_w)
+		px = (int16_t)(screen_w - pw);
+	if (px < 0)
+		px = 0;
+
+	int16_t max_h = (int16_t)(screen_h - status_h - py);
+	if (ph > max_h)
+		ph = max_h;
+	if (ph <= 2)
+		return;
+	int visible_rows = (int)((ph - 2) / RF_FONT_H);
+	if (visible_rows <= 0)
+		return;
+
+	int sel = t->menu_sel;
+	if (sel < 0)
+		sel = 0;
+	if (sel >= count)
+		sel = count - 1;
+	int top = sel - visible_rows / 2;
+	if (top < 0)
+		top = 0;
+	if (top > count - visible_rows)
+		top = count - visible_rows;
+	if (top < 0)
+		top = 0;
+
+	struct rf_color border = rf_color_border();
+	struct rf_color panel = rf_color_panel_bg();
+	struct rf_color fg = rf_color_fg();
+	struct rf_color sel_bg = rf_color_sel_bg();
+	struct rf_color sel_fg = rf_color_sel_fg();
+
+	rf_draw_fill_rect(t, px, py, pw, ph, border);
+	rf_draw_fill_rect(t, (int16_t)(px + 1), (int16_t)(py + 1), (int16_t)(pw - 2), (int16_t)(ph - 2), panel);
+
+	for (int row = 0; row < visible_rows; row++) {
+		int i = top + row;
+		if (i < 0 || i >= count)
+			continue;
+		int16_t y = (int16_t)(py + 1 + (int16_t)row * RF_FONT_H);
+		struct rf_color line_fg = fg;
+		struct rf_color line_bg = panel;
+		if (i == sel) {
+			line_fg = sel_fg;
+			line_bg = sel_bg;
+		}
+		rf_draw_fill_rect(t, (int16_t)(px + 1), y, (int16_t)(pw - 2), RF_FONT_H, line_bg);
+		char line[96];
+		rf_menu_item_line(t, items[i], line, sizeof(line));
+		rf_draw_text(t, (int16_t)(px + 2), y, line, line_fg, line_bg, max_line_cols);
+	}
+}
+
+static void render_overlay(const struct rf_task *t, struct rf_layout l)
+{
+	if (!t)
+		return;
+
+	if (t->show_prompt) {
+		render_prompt_overlay(t);
+		return;
+	}
+	if (t->show_menu) {
+		render_menu_overlay(t, l);
+		return;
+	}
+	if (t->show_help) {
+		render_help_overlay(t);
+		return;
+	}
+	if (t->show_filters) {
+		render_filters_overlay(t, l);
+		return;
+	}
 }
 
 void rf_render_status_line1(const struct rf_task *t, char *out, unsigned outsz)
@@ -621,6 +974,7 @@ void rf_render_dirty(struct rf_task *t)
 	render_waterfall(t, l);
 	render_placeholders(t, l);
 	render_status(t, l);
+	render_overlay(t, l);
 
 	rf_draw_present(t);
 	t->dirty = 0;
