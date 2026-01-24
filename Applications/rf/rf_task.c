@@ -273,6 +273,8 @@ int rf_task_init(struct rf_task *t, int fb_mode, char *err, size_t errsz)
 	}
 	memset(t, 0, sizeof(*t));
 
+	t->record_fd = -1;
+
 	t->active = 1;
 	t->focus = RF_FOCUS_SPECTRUM;
 	t->dirty = RF_DIRTY_ALL;
@@ -386,6 +388,10 @@ void rf_task_destroy(struct rf_task *t)
 	if (!t)
 		return;
 	rf_term_restore_stdin();
+	if (t->record_fd >= 0) {
+		(void)close(t->record_fd);
+		t->record_fd = -1;
+	}
 	free(t->wf_buf);
 	t->wf_buf = NULL;
 	t->wf_cap = 0;

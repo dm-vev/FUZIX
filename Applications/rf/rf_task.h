@@ -86,6 +86,7 @@ struct rf_task {
 	int recording;
 	char record_name[32];
 	char record_path[64];
+	int record_fd;
 	uint8_t *record_buf;
 	size_t record_len;
 	size_t record_cap;
