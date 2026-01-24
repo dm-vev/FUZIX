@@ -12,6 +12,8 @@ struct rf_color {
 	uint8_t b;
 };
 
+enum { RF_FONT_W = 6, RF_FONT_H = 8 };
+
 /* Header/footer rows match Spark rfanalyzer. */
 enum {
 	RF_HEADER_ROWS = 2,
