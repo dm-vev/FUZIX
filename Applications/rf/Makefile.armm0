@@ -22,6 +22,7 @@ SRCS = \
 	rf_waterfall.c \
 	rf_menu.c \
 	rf_menu_actions.c \
+	rf_view.c \
 	rf_prompt.c \
 	rf_filters.c \
 	rf_presets.c \
