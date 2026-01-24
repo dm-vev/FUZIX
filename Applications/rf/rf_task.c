@@ -3,6 +3,7 @@
 #include "rf_draw.h"
 #include "rf_keys.h"
 #include "rf_layout.h"
+#include "rf_menu.h"
 #include "rf_prompt.h"
 #include "rf_render.h"
 #include "rf_scan.h"
@@ -99,6 +100,10 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 			t->show_help = 0;
 			rf_task_invalidate(t, RF_DIRTY_OVERLAY | RF_DIRTY_STATUS);
 		}
+		return;
+	}
+	if (t->show_menu) {
+		rf_menu_handle_key(t, k);
 		return;
 	}
 
@@ -225,9 +230,10 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 		return;
 	case 'm':
 	case 'M':
-		t->show_menu = !t->show_menu;
-		t->menu_sel = 0;
-		rf_task_invalidate(t, RF_DIRTY_HEADER | RF_DIRTY_STATUS);
+		if (t->show_menu)
+			rf_menu_close(t);
+		else
+			rf_menu_open(t);
 		return;
 	case 't':
 	case 'T':
