@@ -6,6 +6,7 @@
 #include "rf_layout.h"
 #include "rf_menu.h"
 #include "rf_prompt.h"
+#include "rf_recording.h"
 #include "rf_render.h"
 #include "rf_scan.h"
 #include "rf_sniffer.h"
@@ -370,6 +371,7 @@ int rf_task_run(struct rf_task *t)
 		t->now_tick = tick;
 		rf_scan_tick(t, tick);
 		rf_sniffer_tick_pps(t, tick);
+		rf_recording_flush(t, tick, 0);
 
 		if (t->dirty && tick >= t->next_render_tick) {
 			rf_render_dirty(t);
@@ -388,10 +390,8 @@ void rf_task_destroy(struct rf_task *t)
 	if (!t)
 		return;
 	rf_term_restore_stdin();
-	if (t->record_fd >= 0) {
-		(void)close(t->record_fd);
-		t->record_fd = -1;
-	}
+	t->now_tick = now_ms();
+	rf_recording_stop(t, NULL, 0);
 	free(t->wf_buf);
 	t->wf_buf = NULL;
 	t->wf_cap = 0;
