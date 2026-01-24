@@ -57,6 +57,7 @@ struct rf_packet_summary {
 };
 
 struct rf_task;
+struct rf_session_packet_meta;
 
 char rf_rate_short(enum rf_data_rate r);
 void rf_crc_text(uint8_t crc_len, uint8_t crc_ok, char out[3]);
@@ -69,10 +70,10 @@ void rf_sniffer_maybe_capture_packet(struct rf_task *t, int ch, uint8_t energy, 
 int rf_sniffer_filtered_count(const struct rf_task *t);
 int rf_sniffer_filtered_packet_summary_by_index(const struct rf_task *t, int idx, struct rf_packet_summary *out);
 const struct rf_packet *rf_sniffer_filtered_live_packet_by_index(const struct rf_task *t, int idx);
+int rf_sniffer_filtered_replay_packet_meta_by_index(const struct rf_task *t, int idx, struct rf_session_packet_meta *out);
 void rf_sniffer_reconcile_selection(struct rf_task *t);
 void rf_sniffer_move_selection(struct rf_task *t, int delta);
 
 void rf_sniffer_filter_summary(const struct rf_task *t, char *out, unsigned outsz);
 
 #endif
-

@@ -3,6 +3,7 @@
 #include "rf_hash.h"
 #include "rf_layout.h"
 #include "rf_recording.h"
+#include "rf_session.h"
 #include "rf_task.h"
 
 #include <stdio.h>
@@ -89,6 +90,29 @@ static struct rf_packet_summary summary_from_packet(const struct rf_packet *p)
 	return s;
 }
 
+static struct rf_packet_summary summary_from_meta(const struct rf_session_packet_meta *m)
+{
+	struct rf_packet_summary s;
+	memset(&s, 0, sizeof(s));
+	if (!m)
+		return s;
+
+	s.seq = m->seq;
+	s.tick = m->tick;
+	s.delta_ms = m->delta_ms;
+	s.flags = m->flags;
+	s.channel = m->channel;
+	s.rate = m->rate;
+	s.addr_len = m->addr_len;
+	memcpy(s.addr, m->addr, sizeof(s.addr));
+	s.length = m->length;
+	s.payload_hash = m->payload_hash;
+	memcpy(s.payload_prefix, m->payload_prefix, sizeof(s.payload_prefix));
+	s.crc_len = m->crc_len;
+	s.crc_ok = m->crc_ok;
+	return s;
+}
+
 static const struct rf_packet *packet_by_display_index(const struct rf_task *t, int i)
 {
 	if (!t || i < 0 || i >= t->pkt_count)
@@ -101,10 +125,46 @@ static const struct rf_packet *packet_by_display_index(const struct rf_task *t, 
 	return &t->packets[idx];
 }
 
+static int replay_limit(const struct rf_task *t)
+{
+	if (!t || !t->replay_active || !t->replay)
+		return 0;
+	int limit = t->replay_pkt_limit;
+	if (limit < 0)
+		limit = 0;
+	if ((size_t)limit > t->replay->packet_count)
+		limit = (int)t->replay->packet_count;
+	return limit;
+}
+
+static int packet_visible_count(const struct rf_task *t)
+{
+	if (!t)
+		return 0;
+	if (t->replay_active && t->replay)
+		return replay_limit(t);
+	return t->pkt_count;
+}
+
 static struct rf_packet_summary packet_summary_by_display_index(const struct rf_task *t, int i, int *ok)
 {
 	if (ok)
 		*ok = 0;
+	if (!t || i < 0)
+		return (struct rf_packet_summary){0};
+
+	if (t->replay_active && t->replay) {
+		int limit = replay_limit(t);
+		if (i >= limit)
+			return (struct rf_packet_summary){0};
+		int meta_idx = limit - 1 - i;
+		if (meta_idx < 0 || (size_t)meta_idx >= t->replay->packet_count)
+			return (struct rf_packet_summary){0};
+		if (ok)
+			*ok = 1;
+		return summary_from_meta(&t->replay->packets[meta_idx]);
+	}
+
 	const struct rf_packet *p = packet_by_display_index(t, i);
 	if (!p)
 		return (struct rf_packet_summary){0};
@@ -194,7 +254,8 @@ int rf_sniffer_filtered_count(const struct rf_task *t)
 	if (!t)
 		return 0;
 	int n = 0;
-	for (int i = 0; i < t->pkt_count; i++) {
+	int total = packet_visible_count(t);
+	for (int i = 0; i < total; i++) {
 		int ok = 0;
 		struct rf_packet_summary p = packet_summary_by_display_index(t, i, &ok);
 		if (!ok)
@@ -210,7 +271,8 @@ int rf_sniffer_filtered_packet_summary_by_index(const struct rf_task *t, int idx
 	if (!t || !out || idx < 0)
 		return 0;
 	int seen = 0;
-	for (int i = 0; i < t->pkt_count; i++) {
+	int total = packet_visible_count(t);
+	for (int i = 0; i < total; i++) {
 		int ok = 0;
 		struct rf_packet_summary p = packet_summary_by_display_index(t, i, &ok);
 		if (!ok || !packet_summary_passes_filters(t, p))
@@ -228,6 +290,8 @@ const struct rf_packet *rf_sniffer_filtered_live_packet_by_index(const struct rf
 {
 	if (!t || idx < 0)
 		return NULL;
+	if (t->replay_active)
+		return NULL;
 	int seen = 0;
 	for (int i = 0; i < t->pkt_count; i++) {
 		const struct rf_packet *p = packet_by_display_index(t, i);
@@ -240,6 +304,32 @@ const struct rf_packet *rf_sniffer_filtered_live_packet_by_index(const struct rf
 		seen++;
 	}
 	return NULL;
+}
+
+int rf_sniffer_filtered_replay_packet_meta_by_index(const struct rf_task *t, int idx, struct rf_session_packet_meta *out)
+{
+	if (!out)
+		return 0;
+	memset(out, 0, sizeof(*out));
+	if (!t || !t->replay_active || !t->replay || idx < 0)
+		return 0;
+
+	int seen = 0;
+	int limit = replay_limit(t);
+	for (int i = 0; i < limit; i++) {
+		int meta_idx = limit - 1 - i;
+		if (meta_idx < 0 || (size_t)meta_idx >= t->replay->packet_count)
+			continue;
+		struct rf_session_packet_meta meta = t->replay->packets[meta_idx];
+		if (!packet_summary_passes_filters(t, summary_from_meta(&meta)))
+			continue;
+		if (seen == idx) {
+			*out = meta;
+			return 1;
+		}
+		seen++;
+	}
+	return 0;
 }
 
 void rf_sniffer_reconcile_selection(struct rf_task *t)
@@ -257,7 +347,8 @@ void rf_sniffer_reconcile_selection(struct rf_task *t)
 	}
 
 	int seen = 0;
-	for (int i = 0; i < t->pkt_count; i++) {
+	int total = packet_visible_count(t);
+	for (int i = 0; i < total; i++) {
 		int ok = 0;
 		struct rf_packet_summary p = packet_summary_by_display_index(t, i, &ok);
 		if (!ok || !packet_summary_passes_filters(t, p))
@@ -277,6 +368,8 @@ void rf_sniffer_reconcile_selection(struct rf_task *t)
 		t->sniffer_sel = 0;
 		t->sniffer_sel_seq = 0;
 	}
+	if (t->replay_active)
+		t->replay_pkt_cache_ok = 0;
 }
 
 static int sniffer_list_rows(const struct rf_task *t)
