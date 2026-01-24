@@ -3,6 +3,8 @@
 #include "rf_keys.h"
 #include "rf_prompt.h"
 #include "rf_recording.h"
+#include "rf_replay.h"
+#include "rf_session.h"
 #include "rf_task.h"
 #include "rf_view.h"
 #include "rf_waterfall.h"
@@ -96,17 +98,16 @@ static void activate_menu_item(struct rf_task *t, enum rf_menu_item_id id)
 		return;
 
 	case RF_MENU_ITEM_LOAD_SESSION:
-		rf_prompt_open(t, RF_PROMPT_LOAD_SESSION, "Load session name (from /rf/sessions)", "session");
-		rf_menu_close(t);
-		return;
-	case RF_MENU_ITEM_EXIT_REPLAY:
-		if (!t->replay_active)
+		{
+			const char *initial = "session";
+			if (t->replay)
+				initial = t->replay->name;
+			rf_prompt_open(t, RF_PROMPT_LOAD_SESSION, "Load session name (from /rf/sessions)", initial);
+			rf_menu_close(t);
 			return;
-		t->replay_active = 0;
-		t->replay_playing = 0;
-		t->replay_speed = 1;
-		t->replay_err[0] = 0;
-		t->replay = NULL;
+		}
+	case RF_MENU_ITEM_EXIT_REPLAY:
+		rf_replay_exit(t);
 		rf_menu_close(t);
 		rf_task_invalidate(t, RF_DIRTY_ALL);
 		return;
@@ -119,9 +120,16 @@ static void activate_menu_item(struct rf_task *t, enum rf_menu_item_id id)
 	case RF_MENU_ITEM_REPLAY_SEEK:
 		if (!t->replay_active)
 			return;
-		rf_prompt_open(t, RF_PROMPT_REPLAY_SEEK, "Seek to t(ms) from session start", "0");
-		rf_menu_close(t);
-		return;
+		{
+			int offset_ms = 0;
+			if (t->replay && t->replay_now_tick >= t->replay->start_tick)
+				offset_ms = (int)(t->replay_now_tick - t->replay->start_tick);
+			char initial[24];
+			snprintf(initial, sizeof(initial), "%d", offset_ms);
+			rf_prompt_open(t, RF_PROMPT_REPLAY_SEEK, "Seek to t(ms) from session start", initial);
+			rf_menu_close(t);
+			return;
+		}
 	case RF_MENU_ITEM_REPLAY_SPEED:
 		if (!t->replay_active)
 			return;
@@ -146,17 +154,32 @@ static void activate_menu_item(struct rf_task *t, enum rf_menu_item_id id)
 		return;
 
 	case RF_MENU_ITEM_EXPORT_CSV:
-		rf_prompt_open(t, RF_PROMPT_EXPORT_CSV, "Export CSV name (to /rf/exports)", "export");
-		rf_menu_close(t);
-		return;
+		{
+			const char *initial = "export";
+			if (t->replay)
+				initial = t->replay->name;
+			rf_prompt_open(t, RF_PROMPT_EXPORT_CSV, "Export CSV name (to /rf/exports)", initial);
+			rf_menu_close(t);
+			return;
+		}
 	case RF_MENU_ITEM_EXPORT_PCAP:
-		rf_prompt_open(t, RF_PROMPT_EXPORT_PCAP, "Export PCAP name (to /rf/exports)", "export");
-		rf_menu_close(t);
-		return;
+		{
+			const char *initial = "export";
+			if (t->replay)
+				initial = t->replay->name;
+			rf_prompt_open(t, RF_PROMPT_EXPORT_PCAP, "Export PCAP name (to /rf/exports)", initial);
+			rf_menu_close(t);
+			return;
+		}
 	case RF_MENU_ITEM_EXPORT_RFPKT:
-		rf_prompt_open(t, RF_PROMPT_EXPORT_RFPKT, "Export raw packet dump name (to /rf/exports)", "export");
-		rf_menu_close(t);
-		return;
+		{
+			const char *initial = "export";
+			if (t->replay)
+				initial = t->replay->name;
+			rf_prompt_open(t, RF_PROMPT_EXPORT_RFPKT, "Export raw packet dump name (to /rf/exports)", initial);
+			rf_menu_close(t);
+			return;
+		}
 	case RF_MENU_ITEM_LOAD_COMPARE_SESSION:
 		rf_prompt_open(t, RF_PROMPT_LOAD_COMPARE_SESSION, "Load compare session name (from /rf/sessions)", "session");
 		rf_menu_close(t);

@@ -4,6 +4,7 @@
 #include "rf_filters.h"
 #include "rf_layout.h"
 #include "rf_menu.h"
+#include "rf_replay.h"
 #include "rf_sniffer.h"
 #include "rf_task.h"
 #include "rf_waterfall.h"
@@ -480,6 +481,11 @@ void rf_render_status_line1(const struct rf_task *t, char *out, unsigned outsz)
 	snprintf(out, outsz, "MODE:%s  WF:%s  CAP:%s  REC:%s", mode, wf, cap, rec);
 	if (t->sweep_count)
 		snprintf(out + strlen(out), outsz - strlen(out), "  SWP:%lu", (unsigned long)t->sweep_count);
+	if (t->replay_active) {
+		char tt[24];
+		rf_replay_time_text(t, tt, sizeof(tt));
+		snprintf(out + strlen(out), outsz - strlen(out), "  %s x%d", tt, rf_clamp_int(t->replay_speed, 1, 32));
+	}
 }
 
 void rf_render_status_line2(const struct rf_task *t, char *out, unsigned outsz)
@@ -795,13 +801,22 @@ static void render_protocol(struct rf_task *t, struct rf_layout l)
 		return;
 
 	int16_t y0 = (int16_t)(inner.y + RF_FONT_H + 1);
-	const struct rf_packet *p = rf_sniffer_filtered_live_packet_by_index(t, t->sniffer_sel);
+	const struct rf_packet *p = NULL;
+	if (t->replay_active) {
+		if (t->replay_pkt_cache_ok)
+			p = &t->replay_pkt_cache;
+	} else {
+		p = rf_sniffer_filtered_live_packet_by_index(t, t->sniffer_sel);
+	}
 	if (!p) {
 		char mode[32];
 		snprintf(mode, sizeof(mode), "mode:%s", rf_protocol_mode_str(t->proto_mode));
 		rf_draw_text(t, (int16_t)(inner.x + 2), y0, mode, rf_color_dim(), rf_color_panel_bg(), max_cols);
-		rf_draw_text(t, (int16_t)(inner.x + 2), (int16_t)(y0 + RF_FONT_H), "(select a packet)", rf_color_dim(),
-			     rf_color_panel_bg(), max_cols);
+		const char *msg = "(select a packet)";
+		if (t->replay_active && t->replay && t->replay_pkt_limit > 0)
+			msg = "(loading packet...)";
+		rf_draw_text(t, (int16_t)(inner.x + 2), (int16_t)(y0 + RF_FONT_H), msg, rf_color_dim(), rf_color_panel_bg(),
+			     max_cols);
 		return;
 	}
 

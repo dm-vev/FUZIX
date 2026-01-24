@@ -1,5 +1,7 @@
 #include "rf_menu.h"
 
+#include "rf_replay.h"
+#include "rf_session.h"
 #include "rf_task.h"
 
 #include <stdio.h>
@@ -155,7 +157,10 @@ void rf_menu_item_line(const struct rf_task *t, struct rf_menu_item it, char *ou
 			snprintf(out, outsz, "%s  [%s]", label, t->recording ? "ON" : "OFF");
 		return;
 	case RF_MENU_ITEM_LOAD_SESSION:
-		snprintf(out, outsz, "%s  [%s]", label, t->replay_active ? "REPLAY" : "LIVE");
+		if (t->replay_active && t->replay)
+			snprintf(out, outsz, "%s  <%s>", label, t->replay->name);
+		else
+			snprintf(out, outsz, "%s  [LIVE]", label);
 		return;
 	case RF_MENU_ITEM_LOAD_COMPARE_SESSION:
 		snprintf(out, outsz, "%s  [OFF]", label);
@@ -172,8 +177,11 @@ void rf_menu_item_line(const struct rf_task *t, struct rf_menu_item it, char *ou
 	case RF_MENU_ITEM_REPLAY_SEEK:
 		if (!t->replay_active)
 			snprintf(out, outsz, "%s  [N/A]", label);
-		else
-			snprintf(out, outsz, "%s", label);
+		else {
+			char tt[24];
+			rf_replay_time_text(t, tt, sizeof(tt));
+			snprintf(out, outsz, "%s  (%s)", label, tt);
+		}
 		return;
 	case RF_MENU_ITEM_REPLAY_SPEED:
 		if (!t->replay_active)
@@ -207,4 +215,3 @@ void rf_menu_item_line(const struct rf_task *t, struct rf_menu_item it, char *ou
 		return;
 	}
 }
-
