@@ -31,6 +31,201 @@ static uint64_t now_ms(void)
 	return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
 }
 
+static void invalidate(struct rf_task *t, uint16_t flags)
+{
+	if (!t)
+		return;
+	t->dirty |= flags;
+}
+
+static void cycle_focus(struct rf_task *t)
+{
+	if (!t)
+		return;
+	t->focus = (enum rf_focus_panel)((int)t->focus + 1);
+	if (t->focus > RF_FOCUS_ANALYSIS)
+		t->focus = RF_FOCUS_SPECTRUM;
+	invalidate(t, RF_DIRTY_HEADER);
+}
+
+static void adjust_setting(struct rf_task *t, int delta)
+{
+	if (!t || delta == 0)
+		return;
+
+	switch ((enum rf_setting)t->selected_setting) {
+	case RF_SETTING_CHAN_LO:
+		t->channel_range_lo = rf_clamp_int(t->channel_range_lo + delta, 0, RF_MAX_CHANNEL);
+		if (t->channel_range_lo > t->channel_range_hi)
+			t->channel_range_hi = t->channel_range_lo;
+		break;
+	case RF_SETTING_CHAN_HI:
+		t->channel_range_hi = rf_clamp_int(t->channel_range_hi + delta, 0, RF_MAX_CHANNEL);
+		if (t->channel_range_hi < t->channel_range_lo)
+			t->channel_range_lo = t->channel_range_hi;
+		break;
+	case RF_SETTING_DWELL:
+		t->dwell_time_ms = rf_clamp_int(t->dwell_time_ms + delta, 1, 50);
+		break;
+	case RF_SETTING_SPEED:
+		t->scan_speed_scalar = rf_clamp_int(t->scan_speed_scalar + delta, 1, 10);
+		break;
+	case RF_SETTING_RATE:
+		t->data_rate = (enum rf_data_rate)rf_wrap_enum((int)t->data_rate + delta, 3);
+		break;
+	case RF_SETTING_CRC:
+		t->crc_mode = (enum rf_crc_mode)rf_wrap_enum((int)t->crc_mode + delta, 3);
+		break;
+	case RF_SETTING_AUTO_ACK:
+		t->auto_ack = !t->auto_ack;
+		break;
+	case RF_SETTING_POWER:
+		t->power_level = (enum rf_power_level)rf_wrap_enum((int)t->power_level + delta, 4);
+		break;
+	default:
+		break;
+	}
+	t->preset_dirty = 1;
+	invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS | RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL);
+}
+
+static void handle_key(struct rf_task *t, const struct rf_key *k)
+{
+	if (!t || !k)
+		return;
+
+	switch (k->kind) {
+	case RF_KEY_ESC:
+		rf_running = 0;
+		return;
+	case RF_KEY_ENTER:
+		if (t->focus == RF_FOCUS_RFCONTROL) {
+			/* Enter toggles/cycles select options like Spark's handleEnter(). */
+			switch ((enum rf_setting)t->selected_setting) {
+			case RF_SETTING_RATE:
+				t->data_rate = (enum rf_data_rate)rf_wrap_enum((int)t->data_rate + 1, 3);
+				t->preset_dirty = 1;
+				invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS);
+				break;
+			case RF_SETTING_CRC:
+				t->crc_mode = (enum rf_crc_mode)rf_wrap_enum((int)t->crc_mode + 1, 3);
+				t->preset_dirty = 1;
+				invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS);
+				break;
+			case RF_SETTING_AUTO_ACK:
+				t->auto_ack = !t->auto_ack;
+				t->preset_dirty = 1;
+				invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS);
+				break;
+			case RF_SETTING_POWER:
+				t->power_level = (enum rf_power_level)rf_wrap_enum((int)t->power_level + 1, 4);
+				t->preset_dirty = 1;
+				invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS);
+				break;
+			default:
+				break;
+			}
+		}
+		return;
+	case RF_KEY_LEFT:
+		switch (t->focus) {
+		case RF_FOCUS_SPECTRUM:
+		case RF_FOCUS_WATERFALL:
+			t->selected_channel--;
+			if (t->selected_channel < 0)
+				t->selected_channel = RF_MAX_CHANNEL;
+			invalidate(t, RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL | RF_DIRTY_STATUS);
+			return;
+		case RF_FOCUS_RFCONTROL:
+			adjust_setting(t, -1);
+			return;
+		default:
+			return;
+		}
+	case RF_KEY_RIGHT:
+		switch (t->focus) {
+		case RF_FOCUS_SPECTRUM:
+		case RF_FOCUS_WATERFALL:
+			t->selected_channel++;
+			if (t->selected_channel > RF_MAX_CHANNEL)
+				t->selected_channel = 0;
+			invalidate(t, RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL | RF_DIRTY_STATUS);
+			return;
+		case RF_FOCUS_RFCONTROL:
+			adjust_setting(t, +1);
+			return;
+		default:
+			return;
+		}
+	case RF_KEY_UP:
+		if (t->focus == RF_FOCUS_RFCONTROL) {
+			if (t->selected_setting > 0)
+				t->selected_setting--;
+			invalidate(t, RF_DIRTY_RFCONTROL);
+		}
+		return;
+	case RF_KEY_DOWN:
+		if (t->focus == RF_FOCUS_RFCONTROL) {
+			if (t->selected_setting < (int)RF_SETTING_MAX - 1)
+				t->selected_setting++;
+			invalidate(t, RF_DIRTY_RFCONTROL);
+		}
+		return;
+	case RF_KEY_RUNE:
+		break;
+	default:
+		return;
+	}
+
+	switch (k->r) {
+	case 'q':
+	case 'Q':
+		rf_running = 0;
+		return;
+	case 's':
+	case 'S':
+		t->scan_active = !t->scan_active;
+		t->scan_next_tick = 0;
+		invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL);
+		return;
+	case 'w':
+	case 'W':
+		t->waterfall_frozen = !t->waterfall_frozen;
+		invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_WATERFALL);
+		return;
+	case 'p':
+	case 'P':
+		t->capture_paused = !t->capture_paused;
+		invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_SNIFFER);
+		return;
+	case 'r':
+	case 'R':
+		/* Minimal reset: clear energy/waterfall and counters. */
+		memset(t->energy_cur, 0, sizeof(t->energy_cur));
+		memset(t->energy_avg, 0, sizeof(t->energy_avg));
+		memset(t->energy_peak, 0, sizeof(t->energy_peak));
+		if (t->wf_buf && t->wf_cap)
+			memset(t->wf_buf, 0, t->wf_cap);
+		t->wf_head = 0;
+		t->sweep_count = 0;
+		t->last_sweep_tick = 0;
+		invalidate(t, RF_DIRTY_ALL);
+		return;
+	case 'm':
+	case 'M':
+		t->show_menu = !t->show_menu;
+		t->menu_sel = 0;
+		invalidate(t, RF_DIRTY_HEADER | RF_DIRTY_STATUS);
+		return;
+	case 't':
+	case 'T':
+		cycle_focus(t);
+		return;
+	default:
+		return;
+	}
+}
+
 int rf_task_init(struct rf_task *t, int fb_mode, char *err, size_t errsz)
 {
 	if (!t) {
@@ -121,10 +316,9 @@ int rf_task_run(struct rf_task *t)
 			memmove(t->inbuf, t->inbuf + consumed, t->inlen - consumed);
 			t->inlen -= consumed;
 
-			/* TODO: replace with full Spark key handling. */
-			if (k.kind == RF_KEY_RUNE && (k.r == 'q' || k.r == 'Q'))
-				rf_running = 0;
-			t->dirty |= RF_DIRTY_STATUS;
+			handle_key(t, &k);
+			if (!rf_running)
+				break;
 		}
 
 		uint64_t tick = now_ms();
