@@ -2,6 +2,7 @@
 
 #include "rf_keys.h"
 #include "rf_prompt.h"
+#include "rf_recording.h"
 #include "rf_task.h"
 #include "rf_waterfall.h"
 
@@ -98,9 +99,8 @@ static void activate_menu_item(struct rf_task *t, enum rf_menu_item_id id)
 
 	case RF_MENU_ITEM_TOGGLE_RECORDING:
 		if (t->recording) {
-			t->recording = 0;
-			t->record_err[0] = 0;
-			rf_task_invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_RFCONTROL | RF_DIRTY_OVERLAY);
+			(void)rf_recording_stop(t, NULL, 0);
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
 			return;
 		}
 		{
@@ -376,4 +376,3 @@ void rf_menu_handle_key(struct rf_task *t, const struct rf_key *k)
 		break;
 	}
 }
-
