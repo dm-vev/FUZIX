@@ -3,6 +3,7 @@
 #include "rf_keys.h"
 #include "rf_presets.h"
 #include "rf_recording.h"
+#include "rf_replay.h"
 #include "rf_task.h"
 
 #include <ctype.h>
@@ -362,6 +363,34 @@ static void submit_prompt(struct rf_task *t)
 		}
 		rf_prompt_close(t);
 		rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS);
+		return;
+	}
+	case RF_PROMPT_LOAD_SESSION: {
+		char rerr[96];
+		if (rf_replay_enter(t, s, rerr, sizeof(rerr)) != 0) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "%s", rerr[0] ? rerr : "load failed");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		rf_prompt_close(t);
+		return;
+	}
+	case RF_PROMPT_REPLAY_SEEK: {
+		if (!t->replay_active || !t->replay) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "replay not active");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		int n = 0;
+		if (!parse_int_strict(s, &n)) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "seek: invalid");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		if (n < 0)
+			n = 0;
+		rf_replay_seek_ms(t, (uint64_t)n);
+		rf_prompt_close(t);
 		return;
 	}
 	case RF_PROMPT_SET_FILTER_ADDR: {
