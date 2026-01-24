@@ -121,6 +121,9 @@ struct rf_task {
 	int replay_cfg_idx;
 	struct rf_session *replay;
 	char replay_err[64];
+	struct rf_packet replay_pkt_cache;
+	uint32_t replay_pkt_cache_seq;
+	int replay_pkt_cache_ok;
 
 	uint32_t rng;
 
