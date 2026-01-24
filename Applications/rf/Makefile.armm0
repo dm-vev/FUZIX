@@ -1,0 +1,53 @@
+ROOT = ../..
+include $(ROOT)/Target/rules.armm0
+
+APP = rf
+
+SRCS = \
+	rf_main.c \
+	rf_task.c \
+	rf_term.c \
+	rf_fb.c \
+	rf_draw.c \
+	rf_font6x8cp1251.c \
+	rf_keys.c \
+	rf_utf8.c \
+	rf_cp1251.c \
+	rf_scan.c \
+	rf_sniffer.c \
+	rf_waterfall.c \
+	rf_menu.c \
+	rf_menu_actions.c \
+	rf_prompt.c \
+	rf_filters.c \
+	rf_presets.c \
+	rf_recording.c \
+	rf_session_read.c \
+	rf_replay.c \
+	rf_exports.c \
+	rf_analytics.c \
+	rf_analysis_render.c \
+	rf_annotations.c \
+	rf_automation.c \
+	rf_automation_render.c \
+	rf_diagnostics.c \
+	rf_stress.c \
+	rf_hash.c \
+	rf_selection.c
+
+OBJS = $(SRCS:.c=.o)
+
+all: $(APP) size.report
+
+$(APP): $(CRT0) $(OBJS)
+	$(LINKER) $^ -o $@.debug -lm$(PLATFORM) $(LINKER_OPT)
+	$(STRIP) $(STRIP_OPT) -o $@ $@.debug
+
+size.report: $(APP)
+	ls -l $< > $@
+
+clean:
+	rm -f $(OBJS) $(APP) *.debug *.bin *.data *.text size.report
+
+.c.o:
+	$(CC) $(CFLAGS) $(COPT) -c -o $@ $<
