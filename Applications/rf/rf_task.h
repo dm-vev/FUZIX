@@ -99,6 +99,17 @@ struct rf_task {
 	enum rf_menu_category menu_cat;
 	int menu_sel;
 
+	int show_help;
+	int show_filters;
+
+	int show_prompt;
+	enum rf_prompt_kind prompt_kind;
+	char prompt_title[64];
+	char prompt_err[64];
+	uint32_t prompt_buf[32];
+	int prompt_len;
+	int prompt_cursor;
+
 	int replay_active;
 	int replay_playing;
 	int replay_speed;

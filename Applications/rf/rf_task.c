@@ -3,6 +3,7 @@
 #include "rf_draw.h"
 #include "rf_keys.h"
 #include "rf_layout.h"
+#include "rf_prompt.h"
 #include "rf_render.h"
 #include "rf_scan.h"
 #include "rf_sniffer.h"
@@ -88,6 +89,18 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 {
 	if (!t || !k)
 		return;
+
+	if (t->show_prompt) {
+		rf_prompt_handle_key(t, k);
+		return;
+	}
+	if (t->show_help) {
+		if (k->kind == RF_KEY_ESC || (k->kind == RF_KEY_RUNE && (k->r == 'h' || k->r == 'H'))) {
+			t->show_help = 0;
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY | RF_DIRTY_STATUS);
+		}
+		return;
+	}
 
 	switch (k->kind) {
 	case RF_KEY_ESC:
@@ -219,6 +232,22 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 	case 't':
 	case 'T':
 		cycle_focus(t);
+		return;
+	case 'c':
+	case 'C': {
+		char initial[16];
+		snprintf(initial, sizeof(initial), "%d", t->selected_channel);
+		rf_prompt_open(t, RF_PROMPT_SET_CHANNEL, "Set selected channel", initial);
+		return;
+	}
+	case 'f':
+	case 'F':
+		/* TODO: filters overlay (Spark filters_actions.go). */
+		return;
+	case 'h':
+	case 'H':
+		t->show_help = 1;
+		rf_task_invalidate(t, RF_DIRTY_OVERLAY | RF_DIRTY_STATUS);
 		return;
 	default:
 		return;
