@@ -85,6 +85,7 @@ static void adjust_setting(struct rf_task *t, int delta)
 		break;
 	}
 	t->preset_dirty = 1;
+	rf_recording_record_config(t, t->now_tick);
 	rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS | RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL);
 }
 

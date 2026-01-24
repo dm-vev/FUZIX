@@ -249,9 +249,9 @@ static void submit_prompt(struct rf_task *t)
 	trim_inplace(s);
 
 	switch (t->prompt_kind) {
-	case RF_PROMPT_SET_CHANNEL: {
-		int n = 0;
-		if (!parse_int_strict(s, &n)) {
+		case RF_PROMPT_SET_CHANNEL: {
+			int n = 0;
+			if (!parse_int_strict(s, &n)) {
 			snprintf(t->prompt_err, sizeof(t->prompt_err), "channel: invalid");
 			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
 			return;
@@ -260,12 +260,13 @@ static void submit_prompt(struct rf_task *t)
 			snprintf(t->prompt_err, sizeof(t->prompt_err), "channel: must be 0..%d", RF_MAX_CHANNEL);
 			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
 			return;
+			}
+			t->selected_channel = n;
+			rf_recording_record_config(t, t->now_tick);
+			rf_prompt_close(t);
+			rf_task_invalidate(t, RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL | RF_DIRTY_STATUS);
+			return;
 		}
-		t->selected_channel = n;
-		rf_prompt_close(t);
-		rf_task_invalidate(t, RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL | RF_DIRTY_STATUS);
-		return;
-	}
 	case RF_PROMPT_SET_RANGE_LO: {
 		int n = 0;
 		if (!parse_int_strict(s, &n)) {
@@ -274,14 +275,15 @@ static void submit_prompt(struct rf_task *t)
 			return;
 		}
 		t->channel_range_lo = rf_clamp_int(n, 0, RF_MAX_CHANNEL);
-		if (t->channel_range_lo > t->channel_range_hi)
-			t->channel_range_hi = t->channel_range_lo;
-		t->preset_dirty = 1;
-		t->scan_next_tick = 0;
-		rf_prompt_close(t);
-		rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL | RF_DIRTY_STATUS);
-		return;
-	}
+			if (t->channel_range_lo > t->channel_range_hi)
+				t->channel_range_hi = t->channel_range_lo;
+			t->preset_dirty = 1;
+			t->scan_next_tick = 0;
+			rf_recording_record_config(t, t->now_tick);
+			rf_prompt_close(t);
+			rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL | RF_DIRTY_STATUS);
+			return;
+		}
 	case RF_PROMPT_SET_RANGE_HI: {
 		int n = 0;
 		if (!parse_int_strict(s, &n)) {
@@ -290,14 +292,15 @@ static void submit_prompt(struct rf_task *t)
 			return;
 		}
 		t->channel_range_hi = rf_clamp_int(n, 0, RF_MAX_CHANNEL);
-		if (t->channel_range_hi < t->channel_range_lo)
-			t->channel_range_lo = t->channel_range_hi;
-		t->preset_dirty = 1;
-		t->scan_next_tick = 0;
-		rf_prompt_close(t);
-		rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL | RF_DIRTY_STATUS);
-		return;
-	}
+			if (t->channel_range_hi < t->channel_range_lo)
+				t->channel_range_lo = t->channel_range_hi;
+			t->preset_dirty = 1;
+			t->scan_next_tick = 0;
+			rf_recording_record_config(t, t->now_tick);
+			rf_prompt_close(t);
+			rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL | RF_DIRTY_STATUS);
+			return;
+		}
 	case RF_PROMPT_SET_DWELL: {
 		int n = 0;
 		if (!parse_int_strict(s, &n)) {
@@ -305,13 +308,14 @@ static void submit_prompt(struct rf_task *t)
 			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
 			return;
 		}
-		t->dwell_time_ms = rf_clamp_int(n, 1, 50);
-		t->preset_dirty = 1;
-		t->scan_next_tick = 0;
-		rf_prompt_close(t);
-		rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_SPECTRUM | RF_DIRTY_STATUS);
-		return;
-	}
+			t->dwell_time_ms = rf_clamp_int(n, 1, 50);
+			t->preset_dirty = 1;
+			t->scan_next_tick = 0;
+			rf_recording_record_config(t, t->now_tick);
+			rf_prompt_close(t);
+			rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_SPECTRUM | RF_DIRTY_STATUS);
+			return;
+		}
 	case RF_PROMPT_SET_SCAN_STEP: {
 		int n = 0;
 		if (!parse_int_strict(s, &n)) {
@@ -319,13 +323,14 @@ static void submit_prompt(struct rf_task *t)
 			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
 			return;
 		}
-		t->scan_speed_scalar = rf_clamp_int(n, 1, 10);
-		t->preset_dirty = 1;
-		t->scan_next_tick = 0;
-		rf_prompt_close(t);
-		rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_SPECTRUM | RF_DIRTY_STATUS);
-		return;
-	}
+			t->scan_speed_scalar = rf_clamp_int(n, 1, 10);
+			t->preset_dirty = 1;
+			t->scan_next_tick = 0;
+			rf_recording_record_config(t, t->now_tick);
+			rf_prompt_close(t);
+			rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_SPECTRUM | RF_DIRTY_STATUS);
+			return;
+		}
 	case RF_PROMPT_SAVE_PRESET: {
 		char perr[96];
 		if (rf_presets_save(t, s, perr, sizeof(perr)) != 0) {

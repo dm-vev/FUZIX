@@ -237,21 +237,25 @@ static void activate_menu_item(struct rf_task *t, enum rf_menu_item_id id)
 		t->data_rate = (enum rf_data_rate)rf_wrap_enum((int)t->data_rate + 1, 3);
 		t->preset_dirty = 1;
 		t->scan_next_tick = 0;
+		rf_recording_record_config(t, t->now_tick);
 		rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_SPECTRUM | RF_DIRTY_STATUS | RF_DIRTY_OVERLAY);
 		return;
 	case RF_MENU_ITEM_CYCLE_CRC:
 		t->crc_mode = (enum rf_crc_mode)rf_wrap_enum((int)t->crc_mode + 1, 3);
 		t->preset_dirty = 1;
+		rf_recording_record_config(t, t->now_tick);
 		rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS | RF_DIRTY_OVERLAY);
 		return;
 	case RF_MENU_ITEM_TOGGLE_AUTO_ACK:
 		t->auto_ack = !t->auto_ack;
 		t->preset_dirty = 1;
+		rf_recording_record_config(t, t->now_tick);
 		rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS | RF_DIRTY_OVERLAY);
 		return;
 	case RF_MENU_ITEM_CYCLE_POWER:
 		t->power_level = (enum rf_power_level)rf_wrap_enum((int)t->power_level + 1, 4);
 		t->preset_dirty = 1;
+		rf_recording_record_config(t, t->now_tick);
 		rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS | RF_DIRTY_OVERLAY);
 		return;
 
@@ -259,6 +263,7 @@ static void activate_menu_item(struct rf_task *t, enum rf_menu_item_id id)
 		t->wf_palette = (enum rf_wf_palette)rf_wrap_enum((int)t->wf_palette + 1, 4);
 		rf_waterfall_rebuild_palette(t);
 		t->preset_dirty = 1;
+		rf_recording_record_config(t, t->now_tick);
 		rf_task_invalidate(t, RF_DIRTY_WATERFALL | RF_DIRTY_STATUS | RF_DIRTY_OVERLAY);
 		return;
 
