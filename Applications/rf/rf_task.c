@@ -5,6 +5,7 @@
 #include "rf_layout.h"
 #include "rf_render.h"
 #include "rf_scan.h"
+#include "rf_sniffer.h"
 #include "rf_term.h"
 
 #include <errno.h>
@@ -156,6 +157,8 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 			if (t->selected_setting > 0)
 				t->selected_setting--;
 			rf_task_invalidate(t, RF_DIRTY_RFCONTROL);
+		} else if (t->focus == RF_FOCUS_SNIFFER) {
+			rf_sniffer_move_selection(t, -1);
 		}
 		return;
 	case RF_KEY_DOWN:
@@ -163,6 +166,8 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 			if (t->selected_setting < (int)RF_SETTING_MAX - 1)
 				t->selected_setting++;
 			rf_task_invalidate(t, RF_DIRTY_RFCONTROL);
+		} else if (t->focus == RF_FOCUS_SNIFFER) {
+			rf_sniffer_move_selection(t, +1);
 		}
 		return;
 	case RF_KEY_RUNE:
@@ -246,6 +251,10 @@ int rf_task_init(struct rf_task *t, int fb_mode, char *err, size_t errsz)
 	t->rng = 0xA341316Cu;
 	t->replay_speed = 1;
 	t->menu_cat = RF_MENU_RF;
+	t->proto_mode = RF_PROTO_DECODED;
+	t->filter_crc = RF_FILTER_CRC_ANY;
+	t->filter_channel = RF_FILTER_CH_ALL;
+	t->auto_ack = 0;
 
 	if (rf_fb_open(&t->fb, fb_mode, err, errsz) != 0)
 		return -1;
@@ -318,6 +327,7 @@ int rf_task_run(struct rf_task *t)
 		uint64_t tick = now_ms();
 		t->now_tick = tick;
 		rf_scan_tick(t, tick);
+		rf_sniffer_tick_pps(t, tick);
 
 		if (t->dirty && tick >= t->next_render_tick) {
 			rf_render_dirty(t);

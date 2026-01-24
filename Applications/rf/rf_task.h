@@ -4,6 +4,7 @@
 #include "rf.h"
 #include "rf_fb.h"
 #include "rf_types.h"
+#include "rf_sniffer.h"
 
 #include <stdint.h>
 #include <stddef.h>
@@ -110,6 +111,35 @@ struct rf_task {
 	char replay_err[64];
 
 	uint32_t rng;
+
+	enum rf_protocol_mode proto_mode;
+
+	struct rf_packet packets[RF_MAX_PACKETS];
+	int pkt_head;
+	int pkt_count;
+	uint32_t pkt_seq;
+	uint32_t pkt_dropped;
+	uint64_t pkt_sec_start;
+	int pkt_sec_count;
+	int pkts_per_sec;
+
+	int sniffer_sel;
+	int sniffer_top;
+	uint32_t sniffer_sel_seq;
+
+	enum rf_filter_crc filter_crc;
+	enum rf_filter_channel filter_channel;
+	int filter_min_len;
+	int filter_max_len;
+	uint8_t filter_addr[5];
+	uint8_t filter_addr_mask[5];
+	int filter_addr_len;
+	uint8_t filter_payload[RF_PAYLOAD_PREFIX_BYTES];
+	uint8_t filter_payload_mask[RF_PAYLOAD_PREFIX_BYTES];
+	int filter_payload_len;
+	int filter_age_ms;
+	int filter_burst_max_ms;
+	int filter_sel;
 };
 
 static inline void rf_task_invalidate(struct rf_task *t, uint16_t flags)
