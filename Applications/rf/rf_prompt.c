@@ -1,6 +1,7 @@
 #include "rf_prompt.h"
 
 #include "rf_keys.h"
+#include "rf_presets.h"
 #include "rf_task.h"
 
 #include <ctype.h>
@@ -322,6 +323,28 @@ static void submit_prompt(struct rf_task *t)
 		t->scan_next_tick = 0;
 		rf_prompt_close(t);
 		rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_SPECTRUM | RF_DIRTY_STATUS);
+		return;
+	}
+	case RF_PROMPT_SAVE_PRESET: {
+		char perr[96];
+		if (rf_presets_save(t, s, perr, sizeof(perr)) != 0) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "save: %s", perr[0] ? perr : "failed");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		rf_prompt_close(t);
+		rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS);
+		return;
+	}
+	case RF_PROMPT_LOAD_PRESET: {
+		char perr[96];
+		if (rf_presets_load(t, s, perr, sizeof(perr)) != 0) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "load: %s", perr[0] ? perr : "failed");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		rf_prompt_close(t);
+		rf_task_invalidate(t, RF_DIRTY_ALL);
 		return;
 	}
 	case RF_PROMPT_SET_FILTER_ADDR: {
