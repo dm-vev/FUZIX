@@ -1,6 +1,7 @@
 #include "rf_scan.h"
 
 #include "rf_task.h"
+#include "rf_sniffer.h"
 #include "rf_waterfall.h"
 
 static int toggle_amp(uint64_t tick, uint64_t period_ticks, int on_amp, int off_amp)
@@ -132,6 +133,7 @@ void rf_scan_tick(struct rf_task *t, uint64_t tick)
 
 		uint8_t v = sample_energy(t, ch, now);
 		update_channel(t, ch, v);
+		rf_sniffer_maybe_capture_packet(t, ch, v, now);
 		rf_task_invalidate(t, RF_DIRTY_SPECTRUM);
 
 		t->scan_chan += step;
@@ -142,4 +144,3 @@ void rf_scan_tick(struct rf_task *t, uint64_t tick)
 		t->scan_next_tick += dwell;
 	}
 }
-
