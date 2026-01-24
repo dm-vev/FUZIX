@@ -4,6 +4,7 @@
 #include "rf_keys.h"
 #include "rf_layout.h"
 #include "rf_render.h"
+#include "rf_scan.h"
 #include "rf_term.h"
 
 #include <errno.h>
@@ -31,13 +32,6 @@ static uint64_t now_ms(void)
 	return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
 }
 
-static void invalidate(struct rf_task *t, uint16_t flags)
-{
-	if (!t)
-		return;
-	t->dirty |= flags;
-}
-
 static void cycle_focus(struct rf_task *t)
 {
 	if (!t)
@@ -45,7 +39,7 @@ static void cycle_focus(struct rf_task *t)
 	t->focus = (enum rf_focus_panel)((int)t->focus + 1);
 	if (t->focus > RF_FOCUS_ANALYSIS)
 		t->focus = RF_FOCUS_SPECTRUM;
-	invalidate(t, RF_DIRTY_HEADER);
+	rf_task_invalidate(t, RF_DIRTY_HEADER);
 }
 
 static void adjust_setting(struct rf_task *t, int delta)
@@ -86,7 +80,7 @@ static void adjust_setting(struct rf_task *t, int delta)
 		break;
 	}
 	t->preset_dirty = 1;
-	invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS | RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL);
+	rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS | RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL);
 }
 
 static void handle_key(struct rf_task *t, const struct rf_key *k)
@@ -105,22 +99,22 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 			case RF_SETTING_RATE:
 				t->data_rate = (enum rf_data_rate)rf_wrap_enum((int)t->data_rate + 1, 3);
 				t->preset_dirty = 1;
-				invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS);
+				rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS);
 				break;
 			case RF_SETTING_CRC:
 				t->crc_mode = (enum rf_crc_mode)rf_wrap_enum((int)t->crc_mode + 1, 3);
 				t->preset_dirty = 1;
-				invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS);
+				rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS);
 				break;
 			case RF_SETTING_AUTO_ACK:
 				t->auto_ack = !t->auto_ack;
 				t->preset_dirty = 1;
-				invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS);
+				rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS);
 				break;
 			case RF_SETTING_POWER:
 				t->power_level = (enum rf_power_level)rf_wrap_enum((int)t->power_level + 1, 4);
 				t->preset_dirty = 1;
-				invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS);
+				rf_task_invalidate(t, RF_DIRTY_RFCONTROL | RF_DIRTY_STATUS);
 				break;
 			default:
 				break;
@@ -134,7 +128,7 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 			t->selected_channel--;
 			if (t->selected_channel < 0)
 				t->selected_channel = RF_MAX_CHANNEL;
-			invalidate(t, RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL | RF_DIRTY_STATUS);
+			rf_task_invalidate(t, RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL | RF_DIRTY_STATUS);
 			return;
 		case RF_FOCUS_RFCONTROL:
 			adjust_setting(t, -1);
@@ -149,7 +143,7 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 			t->selected_channel++;
 			if (t->selected_channel > RF_MAX_CHANNEL)
 				t->selected_channel = 0;
-			invalidate(t, RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL | RF_DIRTY_STATUS);
+			rf_task_invalidate(t, RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL | RF_DIRTY_STATUS);
 			return;
 		case RF_FOCUS_RFCONTROL:
 			adjust_setting(t, +1);
@@ -161,14 +155,14 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 		if (t->focus == RF_FOCUS_RFCONTROL) {
 			if (t->selected_setting > 0)
 				t->selected_setting--;
-			invalidate(t, RF_DIRTY_RFCONTROL);
+			rf_task_invalidate(t, RF_DIRTY_RFCONTROL);
 		}
 		return;
 	case RF_KEY_DOWN:
 		if (t->focus == RF_FOCUS_RFCONTROL) {
 			if (t->selected_setting < (int)RF_SETTING_MAX - 1)
 				t->selected_setting++;
-			invalidate(t, RF_DIRTY_RFCONTROL);
+			rf_task_invalidate(t, RF_DIRTY_RFCONTROL);
 		}
 		return;
 	case RF_KEY_RUNE:
@@ -186,17 +180,17 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 	case 'S':
 		t->scan_active = !t->scan_active;
 		t->scan_next_tick = 0;
-		invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL);
+		rf_task_invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_SPECTRUM | RF_DIRTY_WATERFALL);
 		return;
 	case 'w':
 	case 'W':
 		t->waterfall_frozen = !t->waterfall_frozen;
-		invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_WATERFALL);
+		rf_task_invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_WATERFALL);
 		return;
 	case 'p':
 	case 'P':
 		t->capture_paused = !t->capture_paused;
-		invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_SNIFFER);
+		rf_task_invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_SNIFFER);
 		return;
 	case 'r':
 	case 'R':
@@ -209,13 +203,13 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 		t->wf_head = 0;
 		t->sweep_count = 0;
 		t->last_sweep_tick = 0;
-		invalidate(t, RF_DIRTY_ALL);
+		rf_task_invalidate(t, RF_DIRTY_ALL);
 		return;
 	case 'm':
 	case 'M':
 		t->show_menu = !t->show_menu;
 		t->menu_sel = 0;
-		invalidate(t, RF_DIRTY_HEADER | RF_DIRTY_STATUS);
+		rf_task_invalidate(t, RF_DIRTY_HEADER | RF_DIRTY_STATUS);
 		return;
 	case 't':
 	case 'T':
@@ -323,6 +317,7 @@ int rf_task_run(struct rf_task *t)
 
 		uint64_t tick = now_ms();
 		t->now_tick = tick;
+		rf_scan_tick(t, tick);
 
 		if (t->dirty && tick >= t->next_render_tick) {
 			rf_render_dirty(t);

@@ -112,6 +112,12 @@ struct rf_task {
 	uint32_t rng;
 };
 
+static inline void rf_task_invalidate(struct rf_task *t, uint16_t flags)
+{
+	if (t)
+		t->dirty |= flags;
+}
+
 int rf_task_init(struct rf_task *t, int fb_mode, char *err, size_t errsz);
 int rf_task_run(struct rf_task *t);
 void rf_task_destroy(struct rf_task *t);
