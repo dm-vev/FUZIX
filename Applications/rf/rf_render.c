@@ -484,19 +484,36 @@ void rf_render_status_line1(const struct rf_task *t, char *out, unsigned outsz)
 	else if (t->capture_paused)
 		cap = "PAUSED";
 
-	const char *rec = t->recording ? "ON" : "OFF";
-	(void)wf;
-	(void)cap;
-	(void)rec;
+	char rec_info[64];
+	if (t->record_err[0]) {
+		snprintf(rec_info, sizeof(rec_info), "REC:ERR");
+	} else if (t->recording && t->record_name[0]) {
+		snprintf(rec_info, sizeof(rec_info), "REC:ON %s %luKB", t->record_name, (unsigned long)(t->record_bytes / 1024u));
+	} else {
+		snprintf(rec_info, sizeof(rec_info), "REC:%s", t->recording ? "ON" : "OFF");
+	}
 
-	snprintf(out, outsz, "MODE:%s  WF:%s  CAP:%s  REC:%s", mode, wf, cap, rec);
-	if (t->sweep_count)
-		snprintf(out + strlen(out), outsz - strlen(out), "  SWP:%lu", (unsigned long)t->sweep_count);
+	const char *auto_s = "";
+	if (t->auto_armed) {
+		if (t->auto_err[0])
+			auto_s = " AUTO:ERR";
+		else if (t->auto_started)
+			auto_s = " AUTO:RUN";
+		else
+			auto_s = " AUTO:ARM";
+	}
+
+	char extra[32];
+	extra[0] = 0;
 	if (t->replay_active) {
 		char tt[24];
 		rf_replay_time_text(t, tt, sizeof(tt));
-		snprintf(out + strlen(out), outsz - strlen(out), "  %s x%d", tt, rf_clamp_int(t->replay_speed, 1, 32));
+		snprintf(extra, sizeof(extra), "  %s x%d", tt, rf_clamp_int(t->replay_speed, 1, 32));
 	}
+
+	snprintf(out, outsz, "MODE:%s WF:%s CAP:%s %s%s%s  SEL:%03d  RATE:%s CRC:%s  PKT/s:%d DROP:%lu", mode, wf, cap,
+		 rec_info, auto_s, extra, rf_clamp_int(t->selected_channel, 0, RF_MAX_CHANNEL), rf_data_rate_str(t->data_rate),
+		 rf_crc_mode_str(t->crc_mode), t->pkts_per_sec, (unsigned long)t->pkt_dropped);
 }
 
 void rf_render_status_line2(const struct rf_task *t, char *out, unsigned outsz)
