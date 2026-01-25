@@ -165,6 +165,23 @@ static void handle_analysis_enter(struct rf_task *t)
 		rf_task_invalidate(t, RF_DIRTY_ALL);
 		return;
 	}
+	case RF_ANALYSIS_ANNOTATIONS: {
+		if (!t->replay_active || !t->replay)
+			return;
+		struct rf_annotation notes[8];
+		int n = rf_annotations_visible(t, t->replay_now_tick, notes, (int)(sizeof(notes) / sizeof(notes[0])));
+		if (t->analysis_sel < 0 || t->analysis_sel >= n)
+			return;
+		struct rf_annotation a = notes[t->analysis_sel];
+		if (a.start_tick == 0)
+			return;
+		uint64_t off_ms = 0;
+		if (a.start_tick > t->replay->start_tick)
+			off_ms = a.start_tick - t->replay->start_tick;
+		rf_replay_seek_ms(t, off_ms);
+		rf_task_invalidate(t, RF_DIRTY_ALL);
+		return;
+	}
 	case RF_ANALYSIS_DIAGNOSTICS:
 		rf_diagnostics_run(t, t->now_tick);
 		return;

@@ -1,6 +1,7 @@
 #include "rf_analysis_render.h"
 
 #include "rf_analytics.h"
+#include "rf_annotations.h"
 #include "rf_draw.h"
 #include "rf_replay.h"
 #include "rf_selection.h"
@@ -492,8 +493,67 @@ static void render_monitoring(struct rf_task *t, struct rf_rect box, int16_t y, 
 
 static void render_annotations(struct rf_task *t, struct rf_rect box, int16_t y, int max_cols)
 {
-	(void)t;
-	rf_draw_text(t, (int16_t)(box.x + 2), y, "(annotations: not implemented)", rf_color_dim(), rf_color_panel_bg(), max_cols);
+	if (!t)
+		return;
+
+	uint64_t now = t->now_tick;
+	uint64_t base = 0;
+	int total = t->annot_count;
+	if (t->replay_active) {
+		now = t->replay_now_tick;
+		if (t->replay) {
+			base = t->replay->start_tick;
+			total = (int)t->replay->annotation_count;
+		} else {
+			total = 0;
+		}
+	}
+
+	char hdr[64];
+	if (t->replay_active)
+		snprintf(hdr, sizeof(hdr), "annotations:%d  (Enter jump)", total);
+	else
+		snprintf(hdr, sizeof(hdr), "annotations:%d  (Capture menu)", total);
+	rf_draw_text(t, (int16_t)(box.x + 2), y, hdr, rf_color_dim(), rf_color_panel_bg(), max_cols);
+	y = (int16_t)(y + RF_FONT_H);
+
+	struct rf_annotation notes[8];
+	int n = rf_annotations_visible(t, now, notes, (int)(sizeof(notes) / sizeof(notes[0])));
+	if (n <= 0) {
+		rf_draw_text(t, (int16_t)(box.x + 2), y, "(none)", rf_color_dim(), rf_color_panel_bg(), max_cols);
+		return;
+	}
+
+	if (t->analysis_sel < 0)
+		t->analysis_sel = 0;
+	if (t->analysis_sel >= n)
+		t->analysis_sel = n - 1;
+
+	for (int i = 0; i < n; i++) {
+		const struct rf_annotation a = notes[i];
+		long ts = (long)a.start_tick;
+		if (base != 0 && a.start_tick >= base)
+			ts = (long)(a.start_tick - base);
+		long dur = (long)rf_annotation_duration_ms(a);
+
+		char line[128];
+		snprintf(line, sizeof(line), "t:%06ld +%04ld  %s %s", ts, dur, a.tag, a.note);
+
+		struct rf_color fg = rf_color_fg();
+		struct rf_color bg = rf_color_panel_bg();
+		int active = (a.start_tick != 0) && (a.end_tick > a.start_tick) && (now >= a.start_tick) && (now <= a.end_tick);
+		if (active)
+			fg = rf_color_accent();
+		if (i == t->analysis_sel && t->focus == RF_FOCUS_ANALYSIS) {
+			fg = rf_color_sel_fg();
+			bg = rf_color_sel_bg();
+		}
+
+		int16_t yy = (int16_t)(y + (int16_t)i * RF_FONT_H);
+		if (yy + RF_FONT_H > box.y + box.h)
+			return;
+		draw_line(t, box, yy, line, fg, bg, max_cols);
+	}
 }
 
 static void render_diagnostics(struct rf_task *t, struct rf_rect box, int16_t y, int max_cols)
