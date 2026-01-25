@@ -1,6 +1,7 @@
 #include "rf_render.h"
 
 #include "rf_draw.h"
+#include "rf_analysis_render.h"
 #include "rf_filters.h"
 #include "rf_layout.h"
 #include "rf_menu.h"
@@ -970,7 +971,10 @@ static void render_placeholders(const struct rf_task *t, struct rf_layout l)
 	render_rf_control(t, l);
 	render_sniffer((struct rf_task *)t, l);
 	render_protocol((struct rf_task *)t, l);
-	render_panel(t, l.analysis, "Analysis", t->focus == RF_FOCUS_ANALYSIS);
+	char title[32];
+	snprintf(title, sizeof(title), "Analysis %s", rf_analysis_view_str(t->analysis_view));
+	render_panel(t, l.analysis, title, t->focus == RF_FOCUS_ANALYSIS);
+	rf_analysis_render_contents((struct rf_task *)t, l);
 }
 
 void rf_render_dirty(struct rf_task *t)
