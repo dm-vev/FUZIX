@@ -548,6 +548,30 @@ static void submit_prompt(struct rf_task *t)
 		rf_task_invalidate(t, RF_DIRTY_SNIFFER | RF_DIRTY_PROTOCOL | RF_DIRTY_STATUS);
 		return;
 	}
+	case RF_PROMPT_STRESS_PPS: {
+		int n = 0;
+		if (!parse_int_strict(s, &n)) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "pps: invalid");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		t->stress_pps = rf_clamp_int(n, 1, 1000);
+		rf_prompt_close(t);
+		rf_task_invalidate(t, RF_DIRTY_ANALYSIS | RF_DIRTY_STATUS);
+		return;
+	}
+	case RF_PROMPT_STRESS_DURATION: {
+		int n = 0;
+		if (!parse_int_strict(s, &n)) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "duration: invalid");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		t->stress_duration_ms = rf_clamp_int(n, 0, 1000000);
+		rf_prompt_close(t);
+		rf_task_invalidate(t, RF_DIRTY_ANALYSIS | RF_DIRTY_STATUS);
+		return;
+	}
 	default:
 		snprintf(t->prompt_err, sizeof(t->prompt_err), "not implemented");
 		rf_task_invalidate(t, RF_DIRTY_OVERLAY);
