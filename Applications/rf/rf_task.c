@@ -8,6 +8,7 @@
 #include "rf_keys.h"
 #include "rf_layout.h"
 #include "rf_menu.h"
+#include "rf_preset_profiles.h"
 #include "rf_prompt.h"
 #include "rf_recording.h"
 #include "rf_replay.h"
@@ -236,6 +237,10 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 	}
 	if (t->show_filters) {
 		rf_filters_handle_key(t, k);
+		return;
+	}
+	if (t->show_presets) {
+		rf_preset_profiles_handle_key(t, k);
 		return;
 	}
 	if (t->show_automation) {
@@ -535,6 +540,8 @@ int rf_task_run(struct rf_task *t)
 
 	t->now_tick = now_ms();
 	t->next_render_tick = t->now_tick;
+
+	rf_preset_profiles_maybe_autoload(t);
 
 	/* Initial frame. */
 	t->dirty = RF_DIRTY_ALL;

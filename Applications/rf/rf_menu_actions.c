@@ -3,6 +3,7 @@
 #include "rf_annotations.h"
 #include "rf_automation.h"
 #include "rf_keys.h"
+#include "rf_preset_profiles.h"
 #include "rf_prompt.h"
 #include "rf_recording.h"
 #include "rf_replay.h"
@@ -304,8 +305,7 @@ static void activate_menu_item(struct rf_task *t, enum rf_menu_item_id id)
 		rf_menu_close(t);
 		return;
 	case RF_MENU_ITEM_PRESET_PROFILES:
-		/* TODO: preset profiles overlay */
-		rf_task_invalidate(t, RF_DIRTY_OVERLAY | RF_DIRTY_STATUS);
+		rf_preset_profiles_open(t);
 		rf_menu_close(t);
 		return;
 

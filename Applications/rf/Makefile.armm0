@@ -26,6 +26,7 @@ SRCS = \
 	rf_prompt.c \
 	rf_filters.c \
 	rf_presets.c \
+	rf_preset_profiles.c \
 	rf_recording.c \
 	rf_session_read.c \
 	rf_replay.c \

@@ -6,6 +6,7 @@
 #include "rf_filters.h"
 #include "rf_layout.h"
 #include "rf_menu.h"
+#include "rf_preset_profiles.h"
 #include "rf_replay.h"
 #include "rf_sniffer.h"
 #include "rf_task.h"
@@ -448,6 +449,10 @@ static void render_overlay(const struct rf_task *t, struct rf_layout l)
 	}
 	if (t->show_filters) {
 		render_filters_overlay(t, l);
+		return;
+	}
+	if (t->show_presets) {
+		rf_preset_profiles_render_overlay(t);
 		return;
 	}
 	if (t->show_automation) {
