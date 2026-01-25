@@ -1,5 +1,6 @@
 #include "rf_replay.h"
 
+#include "rf_analytics.h"
 #include "rf.h"
 #include "rf_recording.h"
 #include "rf_session.h"
@@ -137,6 +138,7 @@ static void advance_replay_sweep_to(struct rf_task *t, int target)
 
 	if (t->replay_sweep_idx < 0) {
 		apply_replay_sweep(t, target);
+		rf_analytics_on_sweep(t, t->replay->sweeps[target].tick);
 		t->replay_sweep_idx = target;
 		return;
 	}
@@ -149,6 +151,7 @@ static void advance_replay_sweep_to(struct rf_task *t, int target)
 
 	for (int i = t->replay_sweep_idx + 1; i <= target; i++) {
 		apply_replay_sweep(t, i);
+		rf_analytics_on_sweep(t, t->replay->sweeps[i].tick);
 		t->replay_sweep_idx = i;
 		if (!t->waterfall_frozen)
 			rf_waterfall_push_row(t);
@@ -177,6 +180,7 @@ static void rebuild_replay_waterfall_at(struct rf_task *t, int sweep_idx)
 
 	for (int i = start; i <= sweep_idx && (size_t)i < t->replay->sweep_count; i++) {
 		apply_replay_sweep(t, i);
+		rf_analytics_on_sweep(t, t->replay->sweeps[i].tick);
 		rf_waterfall_push_row(t);
 	}
 	rf_task_invalidate(t, RF_DIRTY_WATERFALL);
@@ -209,9 +213,20 @@ static void update_replay_position(struct rf_task *t, uint64_t session_tick, int
 		   (old_sweep_idx >= 0 && new_sweep_idx - old_sweep_idx > 8) || new_pkt_limit < old_pkt_limit;
 
 	if (jump) {
+		rf_analytics_reset(t);
 		if (new_sweep_idx >= 0) {
 			rebuild_replay_waterfall_at(t, new_sweep_idx);
 			t->replay_sweep_idx = new_sweep_idx;
+		}
+
+		const int pkt_window = 512;
+		int start = new_pkt_limit - pkt_window;
+		if (start < 0)
+			start = 0;
+		for (int i = start; i < new_pkt_limit; i++) {
+			if ((size_t)i >= t->replay->packet_count)
+				break;
+			rf_analytics_on_packet_meta(t, &t->replay->packets[i]);
 		}
 		t->pkt_sec_start = 0;
 		t->pkt_sec_count = 0;
@@ -222,8 +237,14 @@ static void update_replay_position(struct rf_task *t, uint64_t session_tick, int
 	}
 
 	if (new_pkt_limit != old_pkt_limit) {
-		if (!jump && new_pkt_limit > old_pkt_limit)
+		if (!jump && new_pkt_limit > old_pkt_limit) {
+			for (int i = old_pkt_limit; i < new_pkt_limit; i++) {
+				if ((size_t)i >= t->replay->packet_count)
+					break;
+				rf_analytics_on_packet_meta(t, &t->replay->packets[i]);
+			}
 			t->pkt_sec_count += new_pkt_limit - old_pkt_limit;
+		}
 		t->replay_pkt_limit = new_pkt_limit;
 		t->replay_pkt_cache_ok = 0;
 		rf_sniffer_reconcile_selection(t);
@@ -321,6 +342,7 @@ void rf_replay_exit(struct rf_task *t)
 		t->replay = NULL;
 	}
 
+	rf_analytics_reset(t);
 	rf_task_invalidate(t, RF_DIRTY_ALL);
 }
 
