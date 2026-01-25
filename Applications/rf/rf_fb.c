@@ -154,20 +154,20 @@ int rf_fb_activate(struct rf_fb *fb, char *err, size_t errsz)
 	fb->active = 1;
 
 	if (fb->mode == RF_FB_MODE_MEMORY) {
-		char test_err[96];
-		if (rf_fb_memory_roundtrip(fb, test_err, sizeof(test_err)) != 0) {
-			struct display direct;
-			memset(&direct, 0, sizeof(direct));
-			direct.mode = FB_MODE_DIRECT;
-			if (ioctl(fb->fd, GFXIOC_SETMODE, &direct) == 0) {
-				struct display direct_info;
-				memset(&direct_info, 0, sizeof(direct_info));
-				direct_info.mode = FB_MODE_DIRECT;
-				if (ioctl(fb->fd, GFXIOC_GETMODE, &direct_info) == 0)
-					fb->disp = direct_info;
-				fb->mode = RF_FB_MODE_DIRECT;
-				snprintf(fb->warn, sizeof(fb->warn), "FB:DIRECT (%s)", test_err);
-			} else {
+			char test_err[96];
+			if (rf_fb_memory_roundtrip(fb, test_err, sizeof(test_err)) != 0) {
+				struct display direct;
+				memset(&direct, 0, sizeof(direct));
+				direct.mode = FB_MODE_DIRECT;
+				if (ioctl(fb->fd, GFXIOC_SETMODE, &direct) >= 0) {
+					struct display direct_info;
+					memset(&direct_info, 0, sizeof(direct_info));
+					direct_info.mode = FB_MODE_DIRECT;
+					if (ioctl(fb->fd, GFXIOC_GETMODE, &direct_info) >= 0)
+						fb->disp = direct_info;
+					fb->mode = RF_FB_MODE_DIRECT;
+					snprintf(fb->warn, sizeof(fb->warn), "FB:DIRECT (%s)", test_err);
+				} else {
 				if (err && errsz)
 					snprintf(err, errsz, "%s; fallback direct failed: %s", test_err,
 						 strerror(errno));
