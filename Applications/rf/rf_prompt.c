@@ -5,6 +5,7 @@
 #include "rf_presets.h"
 #include "rf_recording.h"
 #include "rf_replay.h"
+#include "rf_session.h"
 #include "rf_task.h"
 
 #include <ctype.h>
@@ -374,6 +375,24 @@ static void submit_prompt(struct rf_task *t)
 			return;
 		}
 		rf_prompt_close(t);
+		return;
+	}
+	case RF_PROMPT_LOAD_COMPARE_SESSION: {
+		char lerr[128];
+		struct rf_session *sess = rf_session_load(s, lerr, sizeof(lerr));
+		if (!sess) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "%s", lerr[0] ? lerr : "load failed");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		if (t->compare) {
+			rf_session_free(t->compare);
+			t->compare = NULL;
+		}
+		t->compare = sess;
+		t->compare_err[0] = 0;
+		rf_prompt_close(t);
+		rf_task_invalidate(t, RF_DIRTY_ANALYSIS | RF_DIRTY_SPECTRUM | RF_DIRTY_STATUS);
 		return;
 	}
 	case RF_PROMPT_REPLAY_SEEK: {

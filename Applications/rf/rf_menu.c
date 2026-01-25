@@ -163,10 +163,13 @@ void rf_menu_item_line(const struct rf_task *t, struct rf_menu_item it, char *ou
 			snprintf(out, outsz, "%s  [LIVE]", label);
 		return;
 	case RF_MENU_ITEM_LOAD_COMPARE_SESSION:
-		snprintf(out, outsz, "%s  [OFF]", label);
+		if (t->compare)
+			snprintf(out, outsz, "%s  <%s>", label, t->compare->name);
+		else
+			snprintf(out, outsz, "%s  [OFF]", label);
 		return;
 	case RF_MENU_ITEM_CLEAR_COMPARE:
-		snprintf(out, outsz, "%s  [N/A]", label);
+		snprintf(out, outsz, "%s  [%s]", label, t->compare ? "OK" : "N/A");
 		return;
 	case RF_MENU_ITEM_REPLAY_PLAY_PAUSE:
 		if (!t->replay_active)

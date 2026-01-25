@@ -181,12 +181,21 @@ static void activate_menu_item(struct rf_task *t, enum rf_menu_item_id id)
 			return;
 		}
 	case RF_MENU_ITEM_LOAD_COMPARE_SESSION:
-		rf_prompt_open(t, RF_PROMPT_LOAD_COMPARE_SESSION, "Load compare session name (from /rf/sessions)", "session");
-		rf_menu_close(t);
-		return;
+		{
+			const char *initial = "session";
+			if (t->compare)
+				initial = t->compare->name;
+			rf_prompt_open(t, RF_PROMPT_LOAD_COMPARE_SESSION, "Load compare session name (from /rf/sessions)", initial);
+			rf_menu_close(t);
+			return;
+		}
 	case RF_MENU_ITEM_CLEAR_COMPARE:
-		/* TODO: compare session support */
-		rf_task_invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_OVERLAY);
+		if (t->compare) {
+			rf_session_free(t->compare);
+			t->compare = NULL;
+		}
+		t->compare_err[0] = 0;
+		rf_task_invalidate(t, RF_DIRTY_ANALYSIS | RF_DIRTY_SPECTRUM | RF_DIRTY_OVERLAY | RF_DIRTY_STATUS);
 		return;
 
 	case RF_MENU_ITEM_RESET_VIEW:
