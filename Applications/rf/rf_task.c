@@ -2,6 +2,7 @@
 
 #include "rf_draw.h"
 #include "rf_analytics.h"
+#include "rf_automation.h"
 #include "rf_diagnostics.h"
 #include "rf_filters.h"
 #include "rf_keys.h"
@@ -489,6 +490,8 @@ int rf_task_init(struct rf_task *t, int fb_mode, char *err, size_t errsz)
 	t->filter_crc = RF_FILTER_CRC_ANY;
 	t->filter_channel = RF_FILTER_CH_ALL;
 	t->auto_ack = 0;
+	t->auto_record = 1;
+	snprintf(t->auto_session_base, sizeof(t->auto_session_base), "auto");
 
 	if (rf_fb_open(&t->fb, fb_mode, err, errsz) != 0)
 		return -1;
@@ -561,6 +564,7 @@ int rf_task_run(struct rf_task *t)
 		uint64_t tick = now_ms();
 		t->now_tick = tick;
 		rf_tick_stats_update(t, tick);
+		rf_automation_tick(t, tick);
 		if (t->replay_active)
 			rf_replay_tick(t, tick);
 		else

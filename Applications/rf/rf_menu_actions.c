@@ -1,6 +1,7 @@
 #include "rf_menu.h"
 
 #include "rf_annotations.h"
+#include "rf_automation.h"
 #include "rf_keys.h"
 #include "rf_prompt.h"
 #include "rf_recording.h"
@@ -104,8 +105,8 @@ static void activate_menu_item(struct rf_task *t, enum rf_menu_item_id id)
 		}
 
 	case RF_MENU_ITEM_AUTOMATION_ARM:
-		/* TODO: port automation.go */
-		rf_task_invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_OVERLAY);
+		rf_automation_toggle_arm(t);
+		rf_task_invalidate(t, RF_DIRTY_STATUS | RF_DIRTY_RFCONTROL | RF_DIRTY_OVERLAY);
 		rf_menu_close(t);
 		return;
 

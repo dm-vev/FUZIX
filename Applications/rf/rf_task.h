@@ -104,6 +104,33 @@ struct rf_task {
 	int show_help;
 	int show_filters;
 
+	int show_presets;
+	int preset_sel;
+	int preset_top;
+	int preset_list_count;
+	char preset_list[64][32];
+	char autoload_preset[32];
+	char autoload_err[64];
+
+	int show_automation;
+	int auto_sel;
+
+	int auto_armed;
+	int auto_started;
+	int auto_start_delay_ms;
+	int auto_duration_ms;
+	int auto_stop_sweeps;
+	int auto_stop_packets;
+	int auto_record;
+	char auto_session_base[32];
+
+	uint64_t auto_start_tick;
+	uint64_t auto_stop_tick;
+	uint64_t auto_run_start_tick;
+	uint64_t auto_run_start_sweeps;
+	uint32_t auto_run_start_pkt_seq;
+	char auto_err[64];
+
 	int show_prompt;
 	enum rf_prompt_kind prompt_kind;
 	char prompt_title[64];
