@@ -524,12 +524,16 @@ void rf_render_status_line2(const struct rf_task *t, char *out, unsigned outsz)
 		snprintf(out, outsz, "");
 		return;
 	}
+	const char *fb_warn = t->fb.warn[0] ? t->fb.warn : "";
+	const char *sep = fb_warn[0] ? "  " : "";
 	if (t->replay_active) {
 		snprintf(out, outsz,
-			 "keys: s play  w wf  p play  r reset  m menu  t focus  c chan  f filt  h help  q quit");
+			 "keys: s play  w wf  p play  r reset  m menu  t focus  c chan  f filt  h help  q quit%s%s",
+			 sep, fb_warn);
 		return;
 	}
-	snprintf(out, outsz, "keys: s scan  w wf  p cap  r reset  m menu  t focus  c chan  f filt  h help  q quit");
+	snprintf(out, outsz, "keys: s scan  w wf  p cap  r reset  m menu  t focus  c chan  f filt  h help  q quit%s%s",
+		 sep, fb_warn);
 }
 
 static void render_status(const struct rf_task *t, struct rf_layout l)
