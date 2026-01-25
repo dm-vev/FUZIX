@@ -1,5 +1,6 @@
 #include "rf_sniffer.h"
 
+#include "rf_analytics.h"
 #include "rf_hash.h"
 #include "rf_layout.h"
 #include "rf_recording.h"
@@ -452,7 +453,9 @@ void rf_sniffer_append_packet(struct rf_task *t, struct rf_packet p)
 	p.delta_ms = 0;
 	p.flags = 0;
 
+	rf_analytics_prepare_live_packet(t, &p);
 	rf_recording_record_packet(t, &p);
+	rf_analytics_on_packet(t, &p);
 
 	if (t->pkt_count < RF_MAX_PACKETS) {
 		t->packets[t->pkt_head] = p;
