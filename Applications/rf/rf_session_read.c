@@ -3,6 +3,7 @@
 #include "rf.h"
 #include "rf_fs.h"
 #include "rf_hash.h"
+#include "rf_session_format.h"
 #include "rf_sniffer.h"
 
 #include <errno.h>
@@ -13,26 +14,17 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-static const char session_magic[] = "RFLOGv1\n";
 static const char *const session_dir = "/rf/sessions";
 static const char *const session_ext = ".rflog";
 
 enum {
-	session_magic_len = 8,
+	session_magic_len = sizeof(RF_SESSION_MAGIC) - 1,
 	max_record_len = 64 * 1024,
 	max_payload_buf = 512,
 	max_sweeps = 16384,
 	max_packets = 32768,
 	max_configs = 2048,
 	max_annotations = 4096,
-};
-
-enum rf_session_record_type {
-	RF_REC_CONFIG = 1,
-	RF_REC_SWEEP,
-	RF_REC_PACKET,
-	RF_REC_ANNOTATION,
-	RF_REC_EVENT,
 };
 
 struct dev_track {
@@ -344,7 +336,7 @@ struct rf_session *rf_session_load(const char *input, char *err, size_t errsz)
 		(void)close(fd);
 		return NULL;
 	}
-	if (memcmp(magic, session_magic, session_magic_len) != 0) {
+	if (memcmp(magic, RF_SESSION_MAGIC, session_magic_len) != 0) {
 		if (err && errsz)
 			snprintf(err, errsz, "bad session header");
 		(void)close(fd);

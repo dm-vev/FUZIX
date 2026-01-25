@@ -3,6 +3,7 @@
 #include "rf.h"
 #include "rf_annotations.h"
 #include "rf_fs.h"
+#include "rf_session_format.h"
 #include "rf_sniffer.h"
 #include "rf_task.h"
 
@@ -13,21 +14,12 @@
 #include <string.h>
 #include <unistd.h>
 
-static const char session_magic[] = "RFLOGv1\n";
 static const char *const session_dir = "/rf/sessions";
 static const char *const session_ext = ".rflog";
 
 enum {
 	record_flush_interval_ticks = 250,
 	max_record_buf = 32 * 1024,
-};
-
-enum rf_session_record_type {
-	RF_REC_CONFIG = 1,
-	RF_REC_SWEEP,
-	RF_REC_PACKET,
-	RF_REC_ANNOTATION,
-	RF_REC_EVENT,
 };
 
 static int ends_with(const char *s, const char *suffix)
@@ -254,7 +246,7 @@ int rf_recording_start(struct rf_task *t, const char *name, char *err, size_t er
 			snprintf(err, errsz, "open %s: %s", path, strerror(errno));
 		return -1;
 	}
-	if (rf_fs_write_all(fd, session_magic, sizeof(session_magic) - 1, err, errsz) != 0) {
+	if (rf_fs_write_all(fd, RF_SESSION_MAGIC, sizeof(RF_SESSION_MAGIC) - 1, err, errsz) != 0) {
 		(void)close(fd);
 		return -1;
 	}
@@ -278,7 +270,7 @@ int rf_recording_start(struct rf_task *t, const char *name, char *err, size_t er
 	t->record_next_flush_tick = t->now_tick + record_flush_interval_ticks;
 	t->record_sweeps = 0;
 	t->record_packets = 0;
-	t->record_bytes = (uint32_t)(sizeof(session_magic) - 1);
+	t->record_bytes = (uint32_t)(sizeof(RF_SESSION_MAGIC) - 1);
 	t->record_err[0] = 0;
 
 	rf_recording_record_config(t, t->now_tick);
