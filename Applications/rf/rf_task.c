@@ -574,6 +574,10 @@ void rf_task_destroy(struct rf_task *t)
 	t->now_tick = now_ms();
 	rf_recording_stop(t, NULL, 0);
 	rf_replay_exit(t);
+	if (t->compare) {
+		rf_session_free(t->compare);
+		t->compare = NULL;
+	}
 	free(t->wf_buf);
 	t->wf_buf = NULL;
 	t->wf_cap = 0;
