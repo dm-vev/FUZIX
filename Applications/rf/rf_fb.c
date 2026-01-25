@@ -33,6 +33,64 @@ static int fb_ensure_cap(struct rf_fb *fb, size_t need)
 	return 0;
 }
 
+static int rf_fb_memory_roundtrip(struct rf_fb *fb, char *err, size_t errsz)
+{
+	if (!fb || fb->fd < 0 || !fb->active) {
+		if (err && errsz)
+			snprintf(err, errsz, "memtest: bad args");
+		return -1;
+	}
+	if (fb->mode != RF_FB_MODE_MEMORY) {
+		if (err && errsz)
+			snprintf(err, errsz, "memtest: not in memory mode");
+		return -1;
+	}
+
+	/* Tiny write+readback to validate the PSRAM path. */
+	const uint16_t x = 0;
+	const uint16_t y = 0;
+	uint16_t w = fb->disp.width;
+	if (!w) {
+		if (err && errsz)
+			snprintf(err, errsz, "memtest: bad fb width");
+		return -1;
+	}
+	/* Keep the test small (FUZIX user stacks are tiny). */
+	if (w > 320)
+		w = 320;
+	const uint16_t h = 1;
+	const size_t pbytes = (size_t)w * (size_t)h * 3u;
+
+	uint8_t *payload = rf_fb_begin_box(fb, x, y, w, h);
+	if (!payload) {
+		if (err && errsz)
+			snprintf(err, errsz, "memtest: alloc");
+		return -1;
+	}
+	for (size_t i = 0; i < pbytes; i++)
+		payload[i] = (uint8_t)(0xA5u ^ (uint8_t)(i * 37u));
+	if (rf_fb_write_box(fb) != 0) {
+		if (err && errsz)
+			snprintf(err, errsz, "memtest: write: %s", strerror(errno));
+		return -1;
+	}
+
+	if (ioctl(fb->fd, GFXIOC_READ, fb->buf) < 0) {
+		if (err && errsz)
+			snprintf(err, errsz, "memtest: read: %s", strerror(errno));
+		return -1;
+	}
+	for (size_t i = 0; i < pbytes; i++) {
+		uint8_t exp = (uint8_t)(0xA5u ^ (uint8_t)(i * 37u));
+		if (payload[i] != exp) {
+			if (err && errsz)
+				snprintf(err, errsz, "memtest: mismatch (PSRAM?)");
+			return -1;
+		}
+	}
+	return 0;
+}
+
 int rf_fb_open(struct rf_fb *fb, int mode, char *err, size_t errsz)
 {
 	struct display disp;
@@ -45,6 +103,7 @@ int rf_fb_open(struct rf_fb *fb, int mode, char *err, size_t errsz)
 	fb->fd = -1;
 	fb->mode = mode;
 	fb->active = 0;
+	fb->warn[0] = 0;
 
 	fb->fd = open("/dev/fb", O_RDWR);
 	if (fb->fd < 0) {
@@ -93,6 +152,30 @@ int rf_fb_activate(struct rf_fb *fb, char *err, size_t errsz)
 		return -1;
 	}
 	fb->active = 1;
+
+	if (fb->mode == RF_FB_MODE_MEMORY) {
+		char test_err[96];
+		if (rf_fb_memory_roundtrip(fb, test_err, sizeof(test_err)) != 0) {
+			struct display direct;
+			memset(&direct, 0, sizeof(direct));
+			direct.mode = FB_MODE_DIRECT;
+			if (ioctl(fb->fd, GFXIOC_SETMODE, &direct) == 0) {
+				struct display direct_info;
+				memset(&direct_info, 0, sizeof(direct_info));
+				direct_info.mode = FB_MODE_DIRECT;
+				if (ioctl(fb->fd, GFXIOC_GETMODE, &direct_info) == 0)
+					fb->disp = direct_info;
+				fb->mode = RF_FB_MODE_DIRECT;
+				snprintf(fb->warn, sizeof(fb->warn), "FB:DIRECT (%s)", test_err);
+			} else {
+				if (err && errsz)
+					snprintf(err, errsz, "%s; fallback direct failed: %s", test_err,
+						 strerror(errno));
+				return -1;
+			}
+		}
+	}
+
 	return 0;
 }
 
@@ -128,12 +211,18 @@ uint8_t *rf_fb_begin_box(struct rf_fb *fb, uint16_t x, uint16_t y, uint16_t w, u
 		return NULL;
 
 	size_t payload = (size_t)w * (size_t)h * 3;
+	if (payload > (size_t)UINT16_MAX - 8u)
+		return NULL;
 	size_t total = sizeof(struct gfx_box) + payload;
 	if (fb_ensure_cap(fb, total) != 0)
 		return NULL;
 
 	struct gfx_box *box = (struct gfx_box *)fb->buf;
-	box->size = (uint16_t)total;
+	/*
+	 * Kernel expects `size` to cover the 8-byte header + pixel payload,
+	 * excluding this uint16_t field itself.
+	 */
+	box->size = (uint16_t)(8u + payload);
 	box->y = y;
 	box->x = x;
 	box->h = h;
@@ -165,4 +254,3 @@ int rf_fb_flush(struct rf_fb *fb, const struct fb_rect *r)
 		return -1;
 	return 0;
 }
-

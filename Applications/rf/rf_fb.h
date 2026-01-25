@@ -18,6 +18,8 @@ struct rf_fb {
 	struct display disp;
 	int active;
 
+	char warn[96];
+
 	uint8_t *buf;
 	size_t cap;
 };
@@ -32,4 +34,3 @@ int rf_fb_write_box(struct rf_fb *fb);
 int rf_fb_flush(struct rf_fb *fb, const struct fb_rect *r);
 
 #endif
-
