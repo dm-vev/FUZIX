@@ -238,6 +238,10 @@ static void handle_key(struct rf_task *t, const struct rf_key *k)
 		rf_filters_handle_key(t, k);
 		return;
 	}
+	if (t->show_automation) {
+		rf_automation_handle_key(t, k);
+		return;
+	}
 
 	switch (k->kind) {
 	case RF_KEY_ESC:

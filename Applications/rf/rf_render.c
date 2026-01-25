@@ -2,6 +2,7 @@
 
 #include "rf_draw.h"
 #include "rf_analysis_render.h"
+#include "rf_automation_render.h"
 #include "rf_filters.h"
 #include "rf_layout.h"
 #include "rf_menu.h"
@@ -447,6 +448,10 @@ static void render_overlay(const struct rf_task *t, struct rf_layout l)
 	}
 	if (t->show_filters) {
 		render_filters_overlay(t, l);
+		return;
+	}
+	if (t->show_automation) {
+		rf_automation_render_overlay(t);
 		return;
 	}
 }

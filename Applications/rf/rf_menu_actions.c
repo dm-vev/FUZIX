@@ -300,8 +300,11 @@ static void activate_menu_item(struct rf_task *t, enum rf_menu_item_id id)
 		return;
 
 	case RF_MENU_ITEM_AUTOMATION_CONFIG:
+		rf_automation_open(t);
+		rf_menu_close(t);
+		return;
 	case RF_MENU_ITEM_PRESET_PROFILES:
-		/* TODO: port overlays */
+		/* TODO: preset profiles overlay */
 		rf_task_invalidate(t, RF_DIRTY_OVERLAY | RF_DIRTY_STATUS);
 		rf_menu_close(t);
 		return;
