@@ -1,6 +1,7 @@
 #include "rf_prompt.h"
 
 #include "rf_annotations.h"
+#include "rf_fs.h"
 #include "rf_keys.h"
 #include "rf_exports.h"
 #include "rf_presets.h"
@@ -442,6 +443,73 @@ static void submit_prompt(struct rf_task *t)
 			return;
 		}
 		rf_prompt_close(t);
+		return;
+	}
+	case RF_PROMPT_AUTO_NAME: {
+		char base[32];
+		rf_sanitize_name(s, base, sizeof(base));
+		if (!base[0]) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "name: invalid");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		snprintf(t->auto_session_base, sizeof(t->auto_session_base), "%s", base);
+		rf_prompt_close(t);
+		rf_task_invalidate(t, RF_DIRTY_OVERLAY | RF_DIRTY_STATUS);
+		return;
+	}
+	case RF_PROMPT_AUTO_START_DELAY: {
+		int n = 0;
+		if (!parse_int_strict(s, &n)) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "start delay: invalid");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		t->auto_start_delay_ms = rf_clamp_int(n, 0, 1000000);
+		if (t->auto_armed && !t->auto_started)
+			t->auto_start_tick = t->now_tick + (uint64_t)t->auto_start_delay_ms;
+		rf_prompt_close(t);
+		rf_task_invalidate(t, RF_DIRTY_OVERLAY | RF_DIRTY_STATUS | RF_DIRTY_RFCONTROL);
+		return;
+	}
+	case RF_PROMPT_AUTO_DURATION: {
+		int n = 0;
+		if (!parse_int_strict(s, &n)) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "duration: invalid");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		t->auto_duration_ms = rf_clamp_int(n, 0, 1000000);
+		if (t->auto_armed && t->auto_started && t->auto_duration_ms > 0)
+			t->auto_stop_tick = t->auto_run_start_tick + (uint64_t)t->auto_duration_ms;
+		else if (t->auto_armed && t->auto_started && t->auto_duration_ms == 0)
+			t->auto_stop_tick = 0;
+		rf_prompt_close(t);
+		rf_task_invalidate(t, RF_DIRTY_OVERLAY | RF_DIRTY_STATUS | RF_DIRTY_RFCONTROL);
+		return;
+	}
+	case RF_PROMPT_AUTO_STOP_SWEEPS: {
+		int n = 0;
+		if (!parse_int_strict(s, &n)) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "sweeps: invalid");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		t->auto_stop_sweeps = rf_clamp_int(n, 0, 1000000);
+		rf_prompt_close(t);
+		rf_task_invalidate(t, RF_DIRTY_OVERLAY | RF_DIRTY_STATUS);
+		return;
+	}
+	case RF_PROMPT_AUTO_STOP_PACKETS: {
+		int n = 0;
+		if (!parse_int_strict(s, &n)) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "packets: invalid");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		t->auto_stop_packets = rf_clamp_int(n, 0, 1000000);
+		rf_prompt_close(t);
+		rf_task_invalidate(t, RF_DIRTY_OVERLAY | RF_DIRTY_STATUS);
 		return;
 	}
 	case RF_PROMPT_SET_FILTER_ADDR: {
