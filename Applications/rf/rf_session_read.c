@@ -364,9 +364,24 @@ struct rf_session *rf_session_load(const char *input, char *err, size_t errsz)
 
 	s->start_tick = 0;
 	s->end_tick = 0;
+	s->sweep_count_total = 0;
+	memset(s->occ_count, 0, sizeof(s->occ_count));
+	memset(s->energy_sum, 0, sizeof(s->energy_sum));
+	memset(s->pkt_count, 0, sizeof(s->pkt_count));
+	memset(s->pkt_bad, 0, sizeof(s->pkt_bad));
+	s->bucket_ms = 0;
+	s->band_occ_pct = NULL;
+	s->band_occ_pct_len = 0;
 
 	struct dev_track devs[RF_MAX_DEVICES];
 	memset(devs, 0, sizeof(devs));
+
+	const uint64_t bucket_ms = 60000u;
+	uint32_t *bucket_occ_sum = NULL;
+	uint32_t *bucket_sweep_count = NULL;
+	size_t bucket_occ_cap = 0;
+	size_t bucket_sweep_cap = 0;
+	size_t bucket_len = 0;
 
 	uint32_t off = session_magic_len;
 	if (lseek(fd, (off_t)off, SEEK_SET) < 0) {
@@ -481,6 +496,43 @@ struct rf_session *rf_session_load(const char *input, char *err, size_t errsz)
 			}
 			s->sweeps[s->sweep_count++] = (struct rf_session_sweep_index){.off = rec_off, .tick = tick};
 			note_tick(s, tick);
+
+			s->sweep_count_total++;
+			int occ_now = 0;
+			for (int ch = 0; ch < RF_NUM_CHANNELS; ch++) {
+				uint8_t v = payload[8 + ch];
+				s->energy_sum[ch] += (uint64_t)v;
+				if (v >= RF_ANA_OCC_THRESHOLD) {
+					s->occ_count[ch]++;
+					occ_now++;
+				}
+			}
+
+			if (s->start_tick != 0 && bucket_ms > 0 && tick >= s->start_tick) {
+				size_t b = (size_t)((tick - s->start_tick) / bucket_ms);
+				size_t want = b + 1;
+				if (want > bucket_len) {
+					if (ensure_capacity((void **)&bucket_occ_sum, &bucket_occ_cap, want, sizeof(uint32_t), err,
+							    errsz) != 0) {
+						rf_session_free(s);
+						free(bucket_occ_sum);
+						free(bucket_sweep_count);
+						return NULL;
+					}
+					if (ensure_capacity((void **)&bucket_sweep_count, &bucket_sweep_cap, want, sizeof(uint32_t), err,
+							    errsz) != 0) {
+						rf_session_free(s);
+						free(bucket_occ_sum);
+						free(bucket_sweep_count);
+						return NULL;
+					}
+					memset(bucket_occ_sum + bucket_len, 0, (want - bucket_len) * sizeof(uint32_t));
+					memset(bucket_sweep_count + bucket_len, 0, (want - bucket_len) * sizeof(uint32_t));
+					bucket_len = want;
+				}
+				bucket_occ_sum[b] += (uint32_t)occ_now;
+				bucket_sweep_count[b] += 1;
+			}
 			break;
 		}
 		case RF_REC_PACKET: {
@@ -540,12 +592,52 @@ struct rf_session *rf_session_load(const char *input, char *err, size_t errsz)
 			}
 			s->packets[s->packet_count++] = m;
 			note_tick(s, m.tick);
+
+			int ch = (int)m.channel;
+			if (ch >= 0 && ch < RF_NUM_CHANNELS) {
+				s->pkt_count[ch]++;
+				if (m.crc_len > 0 && !m.crc_ok)
+					s->pkt_bad[ch]++;
+			}
 			break;
 		}
 		default:
 			break;
 		}
 	}
+
+	if (bucket_len > 0) {
+		s->bucket_ms = (uint32_t)bucket_ms;
+		s->band_occ_pct = (uint8_t *)malloc(bucket_len);
+		if (!s->band_occ_pct) {
+			if (err && errsz)
+				snprintf(err, errsz, "out of memory");
+			rf_session_free(s);
+			free(bucket_occ_sum);
+			free(bucket_sweep_count);
+			return NULL;
+		}
+		s->band_occ_pct_len = bucket_len;
+		for (size_t i = 0; i < bucket_len; i++) {
+			uint32_t cnt = bucket_sweep_count[i];
+			if (cnt == 0) {
+				s->band_occ_pct[i] = 0;
+				continue;
+			}
+			uint64_t denom = (uint64_t)cnt * (uint64_t)RF_NUM_CHANNELS;
+			if (denom == 0) {
+				s->band_occ_pct[i] = 0;
+				continue;
+			}
+			uint64_t pct = (uint64_t)bucket_occ_sum[i] * 100u / denom;
+			if (pct > 100)
+				pct = 100;
+			s->band_occ_pct[i] = (uint8_t)pct;
+		}
+	}
+
+	free(bucket_occ_sum);
+	free(bucket_sweep_count);
 
 	if (s->sweep_count == 0 && s->packet_count == 0) {
 		if (err && errsz)
@@ -577,6 +669,9 @@ void rf_session_free(struct rf_session *s)
 	s->configs = NULL;
 	s->config_count = 0;
 	s->config_cap = 0;
+	free(s->band_occ_pct);
+	s->band_occ_pct = NULL;
+	s->band_occ_pct_len = 0;
 	free(s);
 }
 

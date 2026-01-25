@@ -64,6 +64,16 @@ struct rf_session {
 	uint64_t start_tick;
 	uint64_t end_tick;
 
+	uint32_t sweep_count_total;
+	uint32_t occ_count[RF_NUM_CHANNELS];
+	uint64_t energy_sum[RF_NUM_CHANNELS];
+	uint32_t pkt_count[RF_NUM_CHANNELS];
+	uint32_t pkt_bad[RF_NUM_CHANNELS];
+
+	uint32_t bucket_ms;
+	uint8_t *band_occ_pct;
+	size_t band_occ_pct_len;
+
 	struct rf_session_sweep_index *sweeps;
 	size_t sweep_count;
 	size_t sweep_cap;
