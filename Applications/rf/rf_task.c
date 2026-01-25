@@ -299,9 +299,12 @@ int rf_task_init(struct rf_task *t, int fb_mode, char *err, size_t errsz)
 	t->power_level = RF_PWR_MAX;
 	t->wf_palette = RF_WF_PAL_CYAN;
 	t->rng = 0xA341316Cu;
+	t->stress_pps = 200;
+	t->stress_duration_ms = 10000;
 	t->replay_speed = 1;
 	t->menu_cat = RF_MENU_RF;
 	t->proto_mode = RF_PROTO_DECODED;
+	t->analysis_view = RF_ANALYSIS_CHANNELS;
 	t->filter_crc = RF_FILTER_CRC_ANY;
 	t->filter_channel = RF_FILTER_CH_ALL;
 	t->auto_ack = 0;
