@@ -2,6 +2,7 @@
 #define RF_TASK_H
 
 #include "rf.h"
+#include "rf_annotations.h"
 #include "rf_fb.h"
 #include "rf_types.h"
 #include "rf_sniffer.h"
@@ -134,6 +135,13 @@ struct rf_task {
 	uint32_t tick_stats_avg_ms;
 	uint32_t tick_stats_min_ms;
 	uint32_t tick_stats_max_ms;
+
+	struct rf_annotation annotations[64];
+	int annot_head;
+	int annot_count;
+	struct rf_annotation annot_pending;
+	char annot_last_tag[17];
+	int annot_last_dur_ms;
 
 	uint64_t diag_last_run_tick;
 	int diag_rf_ok;

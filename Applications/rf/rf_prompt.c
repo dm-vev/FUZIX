@@ -1,5 +1,6 @@
 #include "rf_prompt.h"
 
+#include "rf_annotations.h"
 #include "rf_keys.h"
 #include "rf_exports.h"
 #include "rf_presets.h"
@@ -572,6 +573,42 @@ static void submit_prompt(struct rf_task *t)
 		rf_task_invalidate(t, RF_DIRTY_ANALYSIS | RF_DIRTY_STATUS);
 		return;
 	}
+	case RF_PROMPT_ANNOT_TAG: {
+		snprintf(t->annot_pending.tag, sizeof(t->annot_pending.tag), "%s", s);
+		if (!s[0]) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "tag: empty");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		rf_prompt_open(t, RF_PROMPT_ANNOT_NOTE, "Annotation note", t->annot_pending.note);
+		return;
+	}
+	case RF_PROMPT_ANNOT_NOTE: {
+		snprintf(t->annot_pending.note, sizeof(t->annot_pending.note), "%s", s);
+		char initial[16];
+		snprintf(initial, sizeof(initial), "%d", (t->annot_last_dur_ms > 0) ? t->annot_last_dur_ms : 0);
+		rf_prompt_open(t, RF_PROMPT_ANNOT_DURATION, "Annotation duration (ms, 0=point)", initial);
+		return;
+	}
+	case RF_PROMPT_ANNOT_DURATION: {
+		int n = 0;
+		if (!parse_int_strict(s, &n)) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "duration: invalid");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		t->annot_last_dur_ms = rf_clamp_int(n, 0, 1000000);
+		t->annot_pending.end_tick = t->annot_pending.start_tick + (uint64_t)t->annot_last_dur_ms;
+		char aerr[96];
+		if (rf_annotations_add(t, t->annot_pending, aerr, sizeof(aerr)) != 0) {
+			snprintf(t->prompt_err, sizeof(t->prompt_err), "%s", aerr[0] ? aerr : "add failed");
+			rf_task_invalidate(t, RF_DIRTY_OVERLAY);
+			return;
+		}
+		memset(&t->annot_pending, 0, sizeof(t->annot_pending));
+		rf_prompt_close(t);
+		return;
+	}
 	default:
 		snprintf(t->prompt_err, sizeof(t->prompt_err), "not implemented");
 		rf_task_invalidate(t, RF_DIRTY_OVERLAY);
@@ -586,6 +623,9 @@ void rf_prompt_handle_key(struct rf_task *t, const struct rf_key *k)
 
 	switch (k->kind) {
 	case RF_KEY_ESC:
+		if (t->prompt_kind == RF_PROMPT_ANNOT_TAG || t->prompt_kind == RF_PROMPT_ANNOT_NOTE ||
+		    t->prompt_kind == RF_PROMPT_ANNOT_DURATION)
+			memset(&t->annot_pending, 0, sizeof(t->annot_pending));
 		rf_prompt_close(t);
 		return;
 	case RF_KEY_ENTER:

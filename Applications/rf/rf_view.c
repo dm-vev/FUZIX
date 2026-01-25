@@ -1,6 +1,7 @@
 #include "rf_view.h"
 
 #include "rf_analytics.h"
+#include "rf_annotations.h"
 #include "rf_prompt.h"
 #include "rf_task.h"
 
@@ -18,6 +19,7 @@ void rf_view_reset(struct rf_task *t)
 	t->show_help = 0;
 	t->show_filters = 0;
 	rf_prompt_close(t);
+	memset(&t->annot_pending, 0, sizeof(t->annot_pending));
 
 	t->scan_chan = t->channel_range_lo;
 	t->scan_next_tick = 0;

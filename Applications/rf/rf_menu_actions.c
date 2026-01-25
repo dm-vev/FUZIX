@@ -1,9 +1,11 @@
 #include "rf_menu.h"
 
+#include "rf_annotations.h"
 #include "rf_keys.h"
 #include "rf_prompt.h"
 #include "rf_recording.h"
 #include "rf_replay.h"
+#include "rf_selection.h"
 #include "rf_session.h"
 #include "rf_task.h"
 #include "rf_view.h"
@@ -87,9 +89,19 @@ static void activate_menu_item(struct rf_task *t, enum rf_menu_item_id id)
 
 	case RF_MENU_ITEM_ADD_ANNOT_NOW:
 	case RF_MENU_ITEM_ADD_ANNOT_SELECTED:
-		rf_prompt_open(t, RF_PROMPT_ANNOT_TAG, "Annotation (not implemented)", "");
-		rf_menu_close(t);
-		return;
+		{
+			uint64_t tick = t->now_tick;
+			if (t->replay_active)
+				tick = t->replay_now_tick;
+			if (id == RF_MENU_ITEM_ADD_ANNOT_SELECTED) {
+				uint64_t pkt_tick = 0;
+				if (rf_selection_selected_packet_tick(t, &pkt_tick))
+					tick = pkt_tick;
+			}
+			rf_annotations_begin(t, tick);
+			rf_menu_close(t);
+			return;
+		}
 
 	case RF_MENU_ITEM_AUTOMATION_ARM:
 		/* TODO: port automation.go */
