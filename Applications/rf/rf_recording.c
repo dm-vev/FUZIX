@@ -1,6 +1,7 @@
 #include "rf_recording.h"
 
 #include "rf.h"
+#include "rf_annotations.h"
 #include "rf_fs.h"
 #include "rf_sniffer.h"
 #include "rf_task.h"
@@ -415,4 +416,33 @@ void rf_recording_record_packet(struct rf_task *t, const struct rf_packet *p)
 
 	rec_finish(t, start);
 	t->record_packets++;
+}
+
+void rf_recording_record_annotation(struct rf_task *t, const struct rf_annotation *a)
+{
+	if (!t || !t->recording || !a)
+		return;
+
+	size_t tag_len = strlen(a->tag);
+	if (tag_len > 32)
+		tag_len = 32;
+	size_t note_len = strlen(a->note);
+	if (note_len > 64)
+		note_len = 64;
+
+	const size_t payload = 8 + 8 + 1 + tag_len + 1 + note_len;
+	const size_t need = 5 + payload;
+	if (ensure_space(t, a->start_tick, need) != 0)
+		return;
+
+	size_t start = rec_start(t, RF_REC_ANNOTATION);
+	rec_u64(t, a->start_tick);
+	rec_u64(t, a->end_tick);
+	rec_u8(t, (uint8_t)tag_len);
+	for (size_t i = 0; i < tag_len; i++)
+		rec_u8(t, (uint8_t)a->tag[i]);
+	rec_u8(t, (uint8_t)note_len);
+	for (size_t i = 0; i < note_len; i++)
+		rec_u8(t, (uint8_t)a->note[i]);
+	rec_finish(t, start);
 }

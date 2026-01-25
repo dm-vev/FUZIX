@@ -24,6 +24,7 @@ enum {
 	max_sweeps = 16384,
 	max_packets = 32768,
 	max_configs = 2048,
+	max_annotations = 4096,
 };
 
 enum rf_session_record_type {
@@ -419,7 +420,7 @@ struct rf_session *rf_session_load(const char *input, char *err, size_t errsz)
 			return NULL;
 		}
 
-		if (rec_type != RF_REC_CONFIG && rec_type != RF_REC_SWEEP && rec_type != RF_REC_PACKET) {
+		if (rec_type != RF_REC_CONFIG && rec_type != RF_REC_SWEEP && rec_type != RF_REC_PACKET && rec_type != RF_REC_ANNOTATION) {
 			if (lseek(fd, (off_t)rec_len, SEEK_CUR) < 0) {
 				if (err && errsz)
 					snprintf(err, errsz, "seek: %s", strerror(errno));
@@ -601,6 +602,54 @@ struct rf_session *rf_session_load(const char *input, char *err, size_t errsz)
 			}
 			break;
 		}
+		case RF_REC_ANNOTATION: {
+			struct rf_annotation a;
+			memset(&a, 0, sizeof(a));
+			if (rec_len < 8 + 8 + 1 + 1)
+				break;
+			int poff = 0;
+			a.start_tick = rd_u64_le(payload + poff);
+			poff += 8;
+			a.end_tick = rd_u64_le(payload + poff);
+			poff += 8;
+			if (poff >= (int)rec_len)
+				break;
+			int tag_len = payload[poff++];
+			if (tag_len < 0 || poff + tag_len > (int)rec_len)
+				break;
+			int copy = tag_len;
+			if (copy > (int)sizeof(a.tag) - 1)
+				copy = (int)sizeof(a.tag) - 1;
+			memcpy(a.tag, payload + poff, (size_t)copy);
+			a.tag[copy] = 0;
+			poff += tag_len;
+			if (poff >= (int)rec_len)
+				break;
+			int note_len = payload[poff++];
+			if (note_len < 0 || poff + note_len > (int)rec_len)
+				break;
+			copy = note_len;
+			if (copy > (int)sizeof(a.note) - 1)
+				copy = (int)sizeof(a.note) - 1;
+			memcpy(a.note, payload + poff, (size_t)copy);
+			a.note[copy] = 0;
+
+			if (s->annotation_count >= max_annotations) {
+				if (err && errsz)
+					snprintf(err, errsz, "too many annotations");
+				rf_session_free(s);
+				return NULL;
+			}
+			if (ensure_capacity((void **)&s->annotations, &s->annotation_cap, s->annotation_count + 1, sizeof(s->annotations[0]),
+					    err, errsz) != 0) {
+				rf_session_free(s);
+				return NULL;
+			}
+			s->annotations[s->annotation_count++] = a;
+			note_tick(s, a.start_tick);
+			note_tick(s, a.end_tick);
+			break;
+		}
 		default:
 			break;
 		}
@@ -669,6 +718,10 @@ void rf_session_free(struct rf_session *s)
 	s->configs = NULL;
 	s->config_count = 0;
 	s->config_cap = 0;
+	free(s->annotations);
+	s->annotations = NULL;
+	s->annotation_count = 0;
+	s->annotation_cap = 0;
 	free(s->band_occ_pct);
 	s->band_occ_pct = NULL;
 	s->band_occ_pct_len = 0;

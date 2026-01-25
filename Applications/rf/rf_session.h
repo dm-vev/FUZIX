@@ -1,6 +1,7 @@
 #ifndef RF_SESSION_H
 #define RF_SESSION_H
 
+#include "rf_annotations.h"
 #include "rf.h"
 #include "rf_types.h"
 
@@ -85,6 +86,10 @@ struct rf_session {
 	struct rf_session_config_event *configs;
 	size_t config_count;
 	size_t config_cap;
+
+	struct rf_annotation *annotations;
+	size_t annotation_count;
+	size_t annotation_cap;
 };
 
 struct rf_session *rf_session_load(const char *input, char *err, size_t errsz);
