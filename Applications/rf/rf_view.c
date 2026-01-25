@@ -1,5 +1,6 @@
 #include "rf_view.h"
 
+#include "rf_analytics.h"
 #include "rf_prompt.h"
 #include "rf_task.h"
 
@@ -30,6 +31,6 @@ void rf_view_reset(struct rf_task *t)
 		memset(t->wf_buf, 0, t->wf_cap);
 	t->wf_head = 0;
 
+	rf_analytics_reset(t);
 	rf_task_invalidate(t, RF_DIRTY_ALL);
 }
-
